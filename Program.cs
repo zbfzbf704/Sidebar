@@ -25,7 +25,7 @@
     ---
     
     Copyright (c) 2025 蝴蝶哥
-    Email: your-email@example.com
+    Email: 1780555120@qq.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -34,13 +34,16 @@
 #endregion License Information (GPL v3)
 
 using System;
+using System.Drawing;
+using System.IO;
 using System.Windows.Forms;
+using ShareX.HelpersLib;
 
 namespace Sidebar
 {
     internal static class Program
     {
-        public const string AppName = "Sidebar";
+        public const string AppName = "SideBar";
         
         /// <summary>
         /// 应用程序的主入口点。
@@ -55,12 +58,113 @@ namespace Sidebar
             // 高 DPI 支持
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             
+            // 加载自定义图标并替换 ShareX 默认图标
+            LoadCustomIcon();
+            
             // 创建并显示侧边栏
             SidebarForm sidebar = new SidebarForm();
             sidebar.Show();
             
             Application.Run();
         }
+        
+        /// <summary>
+        /// 加载自定义图标并设置为 ShareX 全局图标
+        /// </summary>
+        private static void LoadCustomIcon()
+        {
+            try
+            {
+                // 尝试多个可能的路径
+                string[] possiblePaths = new string[]
+                {
+                    Path.Combine(Application.StartupPath, "icons", "ico.png"),
+                    Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icons", "ico.png"),
+                    Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "icons", "ico.png"),
+                    @"C:\Users\zbfzb\Documents\projects\Sidebar\icons\ico.png" // 开发时的绝对路径
+                };
+                
+                string iconPath = null;
+                foreach (string path in possiblePaths)
+                {
+                    if (File.Exists(path))
+                    {
+                        iconPath = path;
+                        break;
+                    }
+                }
+                
+                if (!string.IsNullOrEmpty(iconPath))
+                {
+                    // 从 PNG 文件创建 Icon
+                    using (Bitmap bitmap = new Bitmap(iconPath))
+                    {
+                        // 创建多个尺寸的图标（Windows 图标通常需要多个尺寸）
+                        // 使用 32x32 作为主要尺寸，并创建 16x16 版本
+                        Icon customIcon = null;
+                        
+                        try
+                        {
+                            // 方法1：尝试直接使用 GetHicon（适用于简单情况）
+                            IntPtr hIcon = bitmap.GetHicon();
+                            Icon tempIcon = Icon.FromHandle(hIcon);
+                            
+                            // 创建新的 Icon 对象以避免句柄问题
+                            using (MemoryStream ms = new MemoryStream())
+                            {
+                                // 保存为 ICO 格式
+                                tempIcon.Save(ms);
+                                ms.Position = 0;
+                                customIcon = new Icon(ms);
+                            }
+                            
+                            // 清理临时图标
+                            tempIcon.Dispose();
+                            DeleteObject(hIcon); // 删除 GDI 对象
+                        }
+                        catch
+                        {
+                            // 如果方法1失败，尝试创建简单的图标
+                            try
+                            {
+                                // 调整到标准图标尺寸（32x32）
+                                Bitmap resizedBitmap = new Bitmap(bitmap, 32, 32);
+                                IntPtr hIcon = resizedBitmap.GetHicon();
+                                customIcon = Icon.FromHandle(hIcon);
+                                
+                                // 克隆以避免句柄问题
+                                Icon clonedIcon = (Icon)customIcon.Clone();
+                                customIcon.Dispose();
+                                customIcon = clonedIcon;
+                                
+                                resizedBitmap.Dispose();
+                                DeleteObject(hIcon);
+                            }
+                            catch
+                            {
+                                // 如果都失败，使用默认图标
+                            }
+                        }
+                        
+                        if (customIcon != null)
+                        {
+                            // 设置为 ShareX 全局图标（所有使用 ShareXResources.ApplyTheme 的窗口都会使用此图标）
+                            ShareXResources.Icon = customIcon;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // 如果加载失败，使用默认的 ShareX 图标（静默失败）
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"加载自定义图标失败: {ex.Message}");
+#endif
+            }
+        }
+        
+        [System.Runtime.InteropServices.DllImport("gdi32.dll")]
+        private static extern bool DeleteObject(IntPtr hObject);
     }
 }
 

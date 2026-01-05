@@ -2,7 +2,7 @@
 
 /*
     Copyright (c) 2025 蝴蝶哥
-    Email: your-email@example.com
+    Email: 1780555120@qq.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -33,7 +33,6 @@ namespace Sidebar
         // UI 控件
         private ListView lstHotkeys;
         private Button btnSave;
-        private Button btnLogin;
         private Label lblInfo;
         
         // 快捷键配置
@@ -42,19 +41,23 @@ namespace Sidebar
         // 工具按钮列表（从SidebarForm获取）
         private List<ToolButtonInfo> toolButtons;
         
+        // API 客户端
+        private AuthAPIClient apiClient;
+        
         // 事件：快捷键保存后触发
         public event EventHandler HotkeysSaved;
         
         public HotkeySettingsForm(List<ToolButtonInfo> buttons)
         {
             this.toolButtons = buttons;
+            this.apiClient = new AuthAPIClient(); // 保留用于其他功能（如果需要）
             InitializeComponent();
         }
         
         private void InitializeComponent()
         {
             this.Text = "设置";
-            this.Size = new Size(500, 500);
+            this.Size = new Size(500, 580); // 增加高度以容纳底部信息区域
             this.StartPosition = FormStartPosition.CenterScreen;
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
@@ -79,19 +82,13 @@ namespace Sidebar
         {
             // 窗口显示后，使用客户区宽度重新计算按钮位置
             int rightMargin = 5; // 距离右侧边缘的间距
-            int topMargin = 5; // 距离顶部边缘的间距
             int bottomMargin = 5; // 距离底部边缘的间距
+            int padding = 10; // 左侧内边距
             
-            // 计算登录按钮的正确位置（右上角）
-            int loginButtonX = this.ClientSize.Width - btnLogin.Width - rightMargin;
-            int loginButtonY = topMargin;
+            // 登录功能已移至侧边栏底部左侧，不再需要调整登录按钮位置
             
-            // 调整登录按钮位置
-            btnLogin.Location = new Point(loginButtonX, loginButtonY);
-            
-            // 调整标题标签宽度，确保不与登录按钮重叠
-            // 标题标签应该从左侧开始，到登录按钮左侧结束（留出间距）
-            int titleLabelWidth = loginButtonX - 10 - 10; // 左侧padding(10) + 右侧间距(10)
+            // 调整标题标签宽度（为右上角的保存按钮留出空间）
+            int titleLabelWidth = this.ClientSize.Width - btnSave.Width - rightMargin - padding - 10; // 为保存按钮留出空间
             foreach (Control control in this.Controls)
             {
                 if (control is Label label && label.Text == "快捷键设置")
@@ -101,25 +98,42 @@ namespace Sidebar
                 }
             }
             
-            // 调整说明标签宽度，确保不与登录按钮重叠
+            // 调整说明标签宽度
             if (lblInfo != null)
             {
-                int infoLabelWidth = loginButtonX - 10 - 10; // 左侧padding(10) + 右侧间距(10)
+                int infoLabelWidth = this.ClientSize.Width - 20; // 左右各10像素padding
                 lblInfo.Size = new Size(infoLabelWidth, lblInfo.Height);
             }
             
-            // 调整保存按钮位置（右下角）
+            // 调整保存按钮位置（右上角，基于客户区定位）
+            int topMargin = 5; // 距离顶部边缘的间距
             btnSave.Location = new Point(
                 this.ClientSize.Width - btnSave.Width - rightMargin,
-                this.ClientSize.Height - btnSave.Height - bottomMargin
+                topMargin
             );
+            
+            // 调整 ListView 高度，为底部信息区域留出空间
+            int bottomInfoAreaHeight = 80; // 底部信息区域高度
+            if (lstHotkeys != null)
+            {
+                lstHotkeys.Size = new Size(lstHotkeys.Width, this.ClientSize.Height - lstHotkeys.Top - bottomInfoAreaHeight - bottomMargin * 2);
+            }
+            
+            // 更新底部信息区域位置
+            if (separator != null)
+            {
+                int bottomY = this.ClientSize.Height - bottomInfoAreaHeight;
+                separator.Location = new Point(separator.Location.X, bottomY - 1);
+                separator.Size = new Size(this.ClientSize.Width - separator.Location.X * 2, 1);
+                
+                if (lblAuthor != null) lblAuthor.Location = new Point(lblAuthor.Location.X, bottomY + 5);
+                if (lblEmail != null) lblEmail.Location = new Point(lblEmail.Location.X, bottomY + 25);
+                if (lblVersion != null) lblVersion.Location = new Point(lblVersion.Location.X, bottomY + 45);
+                if (btnAbout != null) btnAbout.Location = new Point(this.ClientSize.Width - btnAbout.Width - rightMargin, bottomY + 35);
+            }
             
             // 确保按钮在 Z-order 的最上层，避免被其他控件遮挡
             // 在窗口完全初始化后再调整 Z-order
-            if (this.Controls.Contains(btnLogin))
-            {
-                this.Controls.SetChildIndex(btnLogin, 0);
-            }
             if (this.Controls.Contains(btnSave))
             {
                 this.Controls.SetChildIndex(btnSave, 0);
@@ -171,7 +185,7 @@ namespace Sidebar
             lstHotkeys = new ListView
             {
                 Location = new Point(padding, yPos),
-                Size = new Size(480, 300),
+                Size = new Size(480, 280), // 减少高度以为底部信息区域留出空间
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = true,
@@ -183,39 +197,137 @@ namespace Sidebar
             lstHotkeys.Columns.Add("快捷键", 230); // 调整列宽以适应新窗口宽度
             lstHotkeys.MouseDoubleClick += LstHotkeys_MouseDoubleClick;
             this.Controls.Add(lstHotkeys);
-            yPos += 310;
+            yPos += 290; // 调整位置
             
-            // 登录按钮（右上角，距离右侧窗口边缘5像素）
-            // 初始位置会在窗口显示后通过 Shown 事件调整
-            btnLogin = new Button
-            {
-                Text = "登录",
-                Location = new Point(400, padding), // 临时位置，会在 Shown 事件中调整
-                Size = new Size(80, 25),
-                ForeColor = textColor,
-                FlatStyle = FlatStyle.Flat,
-                BackColor = lightGray
-                // 不使用 Anchor，手动计算位置以保持5像素间距
-            };
-            ConfigureButton(btnLogin);
-            btnLogin.Click += BtnLogin_Click;
-            this.Controls.Add(btnLogin);
+            // 登录功能已移至侧边栏底部左侧
             
-            // 保存按钮（右下角，距离右侧窗口边缘5像素）
+            // 底部信息区域（作者信息、版本号、关于按钮）
+            CreateBottomInfoArea();
+            
+            // 保存按钮（右上角，距离右侧和顶部窗口边缘5像素）
             // 初始位置会在窗口显示后通过 Shown 事件调整
             btnSave = new Button
             {
                 Text = "保存",
-                Location = new Point(400, yPos), // 临时位置，会在 Shown 事件中调整
+                Location = new Point(400, 5), // 临时位置，会在 Shown 事件中调整到右上角
                 Size = new Size(90, 30),
                 ForeColor = textColor,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = lightGray
-                // 不使用 Anchor，手动计算位置以保持5像素间距
             };
             ConfigureButton(btnSave);
             btnSave.Click += BtnSave_Click;
             this.Controls.Add(btnSave);
+        }
+        
+        private Panel separator;
+        private Label lblAuthor;
+        private Label lblEmail;
+        private Label lblVersion;
+        private Button btnAbout;
+        
+        private void CreateBottomInfoArea()
+        {
+            int padding = 10;
+            int bottomAreaHeight = 80; // 底部信息区域高度
+            int bottomY = this.ClientSize.Height - bottomAreaHeight;
+            
+            // 分隔线
+            separator = new Panel
+            {
+                Location = new Point(padding, bottomY - 1),
+                Size = new Size(this.ClientSize.Width - padding * 2, 1),
+                BackColor = borderColor,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right
+            };
+            this.Controls.Add(separator);
+            
+            // 作者信息
+            lblAuthor = new Label
+            {
+                Text = "作者：蝴蝶哥",
+                Location = new Point(padding, bottomY + 5),
+                Size = new Size(200, 20),
+                ForeColor = textColor,
+                Font = new Font("Microsoft YaHei", 9F),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left
+            };
+            this.Controls.Add(lblAuthor);
+            
+            // 反馈邮箱
+            lblEmail = new Label
+            {
+                Text = "反馈：1780555120@qq.com",
+                Location = new Point(padding, bottomY + 25),
+                Size = new Size(300, 20),
+                ForeColor = textColor,
+                Font = new Font("Microsoft YaHei", 9F),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left
+            };
+            this.Controls.Add(lblEmail);
+            
+            // 版本号
+            string version = GetApplicationVersion();
+            lblVersion = new Label
+            {
+                Text = $"版本：{version}",
+                Location = new Point(padding, bottomY + 45),
+                Size = new Size(200, 20),
+                ForeColor = textColor,
+                Font = new Font("Microsoft YaHei", 9F),
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Left
+            };
+            this.Controls.Add(lblVersion);
+            
+            // 关于按钮
+            btnAbout = new Button
+            {
+                Text = "关于",
+                Location = new Point(this.ClientSize.Width - 100, bottomY + 35),
+                Size = new Size(80, 30),
+                ForeColor = textColor,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = lightGray,
+                Anchor = AnchorStyles.Bottom | AnchorStyles.Right
+            };
+            ConfigureButton(btnAbout);
+            btnAbout.Click += BtnAbout_Click;
+            this.Controls.Add(btnAbout);
+        }
+        
+        private string GetApplicationVersion()
+        {
+            try
+            {
+                // 尝试从程序集获取版本号
+                System.Reflection.Assembly assembly = System.Reflection.Assembly.GetExecutingAssembly();
+                System.Diagnostics.FileVersionInfo fileVersionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(assembly.Location);
+                string version = fileVersionInfo.FileVersion;
+                
+                if (string.IsNullOrEmpty(version))
+                {
+                    // 如果 FileVersion 为空，尝试使用 AssemblyVersion
+                    Version assemblyVersion = assembly.GetName().Version;
+                    if (assemblyVersion != null)
+                    {
+                        version = assemblyVersion.ToString();
+                    }
+                }
+                
+                return version ?? "未知版本";
+            }
+            catch
+            {
+                return "未知版本";
+            }
+        }
+        
+        private void BtnAbout_Click(object sender, EventArgs e)
+        {
+            using (AboutForm aboutForm = new AboutForm())
+            {
+                aboutForm.ShowDialog(this);
+            }
         }
         
         private void ConfigureButton(Button button)
@@ -307,12 +419,7 @@ namespace Sidebar
             RefreshListView();
         }
         
-        private void BtnLogin_Click(object sender, EventArgs e)
-        {
-            // TODO: 后续接入服务器的登录注册功能
-            MessageBox.Show("登录功能\n\n此功能将在后续版本中接入服务器登录注册功能。", 
-                "登录", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        }
+        // 登录功能已移至侧边栏底部左侧
         
         private void BtnSave_Click(object sender, EventArgs e)
         {

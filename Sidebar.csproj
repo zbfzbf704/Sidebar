@@ -13,7 +13,9 @@
     <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
     <ApplicationDefaultFont>Microsoft Sans Serif, 8.25pt</ApplicationDefaultFont>
     <CETCompat>false</CETCompat>
-    <Version>1.0.0</Version>
+    <Version>5.0.1</Version>
+    <AssemblyName>SideBar</AssemblyName>
+    <Product>SideBar</Product>
     <Authors>Your Name</Authors>
     <Company>Your Company</Company>
     <Copyright>Copyright (c) 2025</Copyright>
@@ -25,6 +27,11 @@
     <Compile Remove="ShareX-develop\**" />
     <EmbeddedResource Remove="ShareX-develop\**" />
     <None Remove="ShareX-develop\**" />
+    
+    <!-- 排除开源协议上传完整代码目录，避免重复编译 -->
+    <Compile Remove="开源协议上传完整代码\**" />
+    <EmbeddedResource Remove="开源协议上传完整代码\**" />
+    <None Remove="开源协议上传完整代码\**" />
   </ItemGroup>
   
   <ItemGroup>
@@ -47,5 +54,89 @@
     <!-- JSON 序列化库 -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
+  
+  <!-- 构建时自动复制 FFmpeg 到输出目录（使用简化的目录名） -->
+  <Target Name="CopyFFmpegBinaries" AfterTargets="Build">
+    <ItemGroup>
+      <FFmpegBinaries Include="ffmpeg-8.0.1-essentials_build\bin\*.exe" />
+      <FFmpegLicense Include="ffmpeg-8.0.1-essentials_build\LICENSE" />
+      <FFmpegPresets Include="ffmpeg-8.0.1-essentials_build\presets\*.*" />
+      <FFmpegReadme Include="ffmpeg-8.0.1-essentials_build\README.txt" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FFmpegBinaries)" 
+          DestinationFolder="$(OutDir)ffmpeg-8.0.1\bin" 
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(FFmpegLicense)" 
+          DestinationFolder="$(OutDir)ffmpeg-8.0.1" 
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(FFmpegPresets)" 
+          DestinationFolder="$(OutDir)ffmpeg-8.0.1\presets" 
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(FFmpegReadme)" 
+          DestinationFolder="$(OutDir)ffmpeg-8.0.1" 
+          SkipUnchangedFiles="true" />
+  </Target>
+  
+  <!-- 构建时自动复制 icons 目录到输出目录 -->
+  <Target Name="CopyIcons" AfterTargets="Build">
+    <ItemGroup>
+      <Icons Include="icons\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(Icons)" 
+          DestinationFolder="$(OutDir)icons\%(RecursiveDir)" 
+          SkipUnchangedFiles="true" />
+  </Target>
+  
+  <!-- 发布时也复制 FFmpeg（使用简化的目录名） -->
+  <Target Name="CopyFFmpegBinariesOnPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <FFmpegBinaries Include="ffmpeg-8.0.1-essentials_build\bin\*.exe" />
+      <FFmpegLicense Include="ffmpeg-8.0.1-essentials_build\LICENSE" />
+      <FFmpegPresets Include="ffmpeg-8.0.1-essentials_build\presets\*.*" />
+      <FFmpegReadme Include="ffmpeg-8.0.1-essentials_build\README.txt" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FFmpegBinaries)" 
+          DestinationFolder="$(PublishDir)ffmpeg-8.0.1\bin" 
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(FFmpegLicense)" 
+          DestinationFolder="$(PublishDir)ffmpeg-8.0.1" 
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(FFmpegPresets)" 
+          DestinationFolder="$(PublishDir)ffmpeg-8.0.1\presets" 
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(FFmpegReadme)" 
+          DestinationFolder="$(PublishDir)ffmpeg-8.0.1" 
+          SkipUnchangedFiles="true" />
+  </Target>
+  
+  <!-- 发布时也复制 icons 目录 -->
+  <Target Name="CopyIconsOnPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <Icons Include="icons\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(Icons)" 
+          DestinationFolder="$(PublishDir)icons\%(RecursiveDir)" 
+          SkipUnchangedFiles="true" />
+  </Target>
+  
+  <!-- 构建时自动复制特效目录到输出目录 -->
+  <Target Name="CopyEffects" AfterTargets="Build">
+    <ItemGroup>
+      <Effects Include="特效\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(Effects)" 
+          DestinationFolder="$(OutDir)特效\%(RecursiveDir)" 
+          SkipUnchangedFiles="true" />
+  </Target>
+  
+  <!-- 发布时也复制特效目录 -->
+  <Target Name="CopyEffectsOnPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <Effects Include="特效\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(Effects)" 
+          DestinationFolder="$(PublishDir)特效\%(RecursiveDir)" 
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>
 

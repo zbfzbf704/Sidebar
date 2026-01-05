@@ -37,6 +37,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -98,14 +99,58 @@ namespace Sidebar
                 string tokenPath = GetTokenPath();
                 if (File.Exists(tokenPath))
                 {
-                    string json = File.ReadAllText(tokenPath);
-                    var tokenData = JsonConvert.DeserializeObject<Dictionary<string, string>>(json);
-                    if (tokenData != null)
+                    string content = File.ReadAllText(tokenPath);
+                    string json = null;
+                    
+                    // 尝试解密（新格式：加密存储）
+                    try
                     {
-                        Phone = tokenData.ContainsKey("phone") ? tokenData["phone"] : null;
-                        Token = tokenData.ContainsKey("token") ? tokenData["token"] : null;
-                        Expires = tokenData.ContainsKey("expires") ? tokenData["expires"] : null;
-                        SubscriptionType = tokenData.ContainsKey("subscription_type") ? tokenData["subscription_type"] : null;
+                        json = DPAPI.Decrypt(content, "Sidebar-Auth-Token", DataProtectionScope.CurrentUser);
+#if DEBUG
+                        System.Diagnostics.Debug.WriteLine("已使用加密格式加载 Token");
+#endif
+                    }
+                    catch
+                    {
+                        // 如果不是加密格式，按旧格式处理（向后兼容）
+                        try
+                        {
+                            // 尝试直接解析 JSON（旧格式：明文存储）
+                            var testData = JsonConvert.DeserializeObject<Dictionary<string, string>>(content);
+                            if (testData != null)
+                            {
+                                json = content;
+#if DEBUG
+                                System.Diagnostics.Debug.WriteLine("检测到旧格式（明文），将自动迁移为加密格式");
+#endif
+                            }
+                        }
+                        catch
+                        {
+                            // 既不是加密格式，也不是有效的 JSON，可能是损坏的文件
+#if DEBUG
+                            System.Diagnostics.Debug.WriteLine("Token 文件格式无效，将忽略");
+#endif
+                            return;
+                        }
+                    }
+                    
+                    if (!string.IsNullOrEmpty(json))
+                    {
+                        var tokenData = JsonConvert.DeserializeObject<Dictionary<string, string>>(json);
+                        if (tokenData != null)
+                        {
+                            Phone = tokenData.ContainsKey("phone") ? tokenData["phone"] : null;
+                            Token = tokenData.ContainsKey("token") ? tokenData["token"] : null;
+                            Expires = tokenData.ContainsKey("expires") ? tokenData["expires"] : null;
+                            SubscriptionType = tokenData.ContainsKey("subscription_type") ? tokenData["subscription_type"] : null;
+                            
+                            // 如果是从旧格式加载的，自动迁移为加密格式
+                            if (json == content)
+                            {
+                                SaveToken(); // 重新保存为加密格式
+                            }
+                        }
                     }
                 }
             }
@@ -139,7 +184,14 @@ namespace Sidebar
                     };
                     
                     string json = JsonConvert.SerializeObject(tokenData);
-                    File.WriteAllText(tokenPath, json);
+                    
+                    // 使用 DPAPI 加密存储（使用应用标识作为额外熵，增强安全性）
+                    string encryptedJson = DPAPI.Encrypt(json, "Sidebar-Auth-Token", DataProtectionScope.CurrentUser);
+                    
+                    File.WriteAllText(tokenPath, encryptedJson);
+#if DEBUG
+                    System.Diagnostics.Debug.WriteLine("Token 已加密保存");
+#endif
                 }
             }
             catch (Exception ex)
@@ -612,14 +664,44 @@ namespace Sidebar
                 string trialPath = GetTrialPeriodPath();
                 if (File.Exists(trialPath))
                 {
-                    string json = File.ReadAllText(trialPath);
-                    var trialData = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
-                    if (trialData != null && trialData.ContainsKey("start_date"))
+                    string content = File.ReadAllText(trialPath);
+                    string json = null;
+                    
+                    // 尝试解密（新格式：加密存储）
+                    try
                     {
-                        if (DateTime.TryParse(trialData["start_date"]?.ToString(), out DateTime startDate))
+                        json = DPAPI.Decrypt(content, "Sidebar-Trial-Period", DataProtectionScope.CurrentUser);
+                    }
+                    catch
+                    {
+                        // 如果不是加密格式，按旧格式处理（向后兼容）
+                        try
                         {
-                            DateTime endDate = startDate.AddDays(60); // 60天试用期
-                            return DateTime.Now < endDate;
+                            var testData = JsonConvert.DeserializeObject<Dictionary<string, object>>(content);
+                            if (testData != null)
+                            {
+                                json = content;
+                                // 自动迁移为加密格式
+                                SaveTrialPeriodStart();
+                            }
+                        }
+                        catch
+                        {
+                            // 文件格式无效
+                            return false;
+                        }
+                    }
+                    
+                    if (!string.IsNullOrEmpty(json))
+                    {
+                        var trialData = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
+                        if (trialData != null && trialData.ContainsKey("start_date"))
+                        {
+                            if (DateTime.TryParse(trialData["start_date"]?.ToString(), out DateTime startDate))
+                            {
+                                DateTime endDate = startDate.AddDays(60); // 60天试用期
+                                return DateTime.Now < endDate;
+                            }
                         }
                     }
                 }
@@ -659,7 +741,11 @@ namespace Sidebar
                 };
                 
                 string json = JsonConvert.SerializeObject(trialData);
-                File.WriteAllText(trialPath, json);
+                
+                // 使用 DPAPI 加密存储
+                string encryptedJson = DPAPI.Encrypt(json, "Sidebar-Trial-Period", DataProtectionScope.CurrentUser);
+                
+                File.WriteAllText(trialPath, encryptedJson);
             }
             catch
             {
@@ -697,15 +783,43 @@ namespace Sidebar
                 string trialPath = GetTrialPeriodPath();
                 if (File.Exists(trialPath))
                 {
-                    string json = File.ReadAllText(trialPath);
-                    var trialData = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
-                    if (trialData != null && trialData.ContainsKey("start_date"))
+                    string content = File.ReadAllText(trialPath);
+                    string json = null;
+                    
+                    // 尝试解密（新格式：加密存储）
+                    try
                     {
-                        if (DateTime.TryParse(trialData["start_date"]?.ToString(), out DateTime startDate))
+                        json = DPAPI.Decrypt(content, "Sidebar-Trial-Period", DataProtectionScope.CurrentUser);
+                    }
+                    catch
+                    {
+                        // 如果不是加密格式，按旧格式处理（向后兼容）
+                        try
                         {
-                            DateTime endDate = startDate.AddDays(60);
-                            int remainingDays = (int)(endDate - DateTime.Now).TotalDays;
-                            return Math.Max(0, remainingDays);
+                            var testData = JsonConvert.DeserializeObject<Dictionary<string, object>>(content);
+                            if (testData != null)
+                            {
+                                json = content;
+                            }
+                        }
+                        catch
+                        {
+                            // 文件格式无效
+                            return 0;
+                        }
+                    }
+                    
+                    if (!string.IsNullOrEmpty(json))
+                    {
+                        var trialData = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
+                        if (trialData != null && trialData.ContainsKey("start_date"))
+                        {
+                            if (DateTime.TryParse(trialData["start_date"]?.ToString(), out DateTime startDate))
+                            {
+                                DateTime endDate = startDate.AddDays(60);
+                                int remainingDays = (int)(endDate - DateTime.Now).TotalDays;
+                                return Math.Max(0, remainingDays);
+                            }
                         }
                     }
                 }

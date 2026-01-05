@@ -2,7 +2,7 @@
 
 /*
     Copyright (c) 2025 蝴蝶哥
-    Email: your-email@example.com
+    Email: 1780555120@qq.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -3178,7 +3178,7 @@ namespace Sidebar
                     Duration = duration, // 显示持续时间（毫秒）
                     FadeDuration = 500, // 渐变动画持续时间（毫秒）
                     Placement = ContentAlignment.BottomRight, // 右下角位置
-                    Offset = 10, // 距离边缘的偏移量
+                    Offset = 80, // 距离屏幕右侧80像素，避免和侧边栏重叠
                     Size = new Size(300, 80), // 通知窗口大小
                     Title = title,
                     Text = text,
@@ -3188,21 +3188,17 @@ namespace Sidebar
                     TitleColor = Color.FromArgb(240, 240, 240) // 标题颜色
                 };
                 
-                // 显示通知（在主线程中）
+                // 显示通知（在主线程中，使用 ShareX 风格）
                 if (this.InvokeRequired)
                 {
                     this.Invoke((System.Windows.Forms.MethodInvoker)delegate
                     {
                         NotificationForm.Show(config);
-                        // 向左移动5像素（通过反射获取实例并调整位置）
-                        AdjustNotificationPosition(-5, 0);
                     });
                 }
                 else
                 {
                     NotificationForm.Show(config);
-                    // 向左移动5像素
-                    AdjustNotificationPosition(-5, 0);
                 }
             }
             catch

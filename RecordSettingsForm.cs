@@ -25,7 +25,7 @@
     ---
     
     Copyright (c) 2025 蝴蝶哥
-    Email: your-email@example.com
+    Email: 1780555120@qq.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -36,8 +36,10 @@
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.IO;
 using System.Windows.Forms;
 using ShareX.ScreenCaptureLib;
+using ShareX.HelpersLib;
 
 namespace Sidebar
 {
@@ -54,6 +56,10 @@ namespace Sidebar
         private Button btnRecord;
         private Button btnOptions;
         private RecordType currentRecordType;
+        
+        // 录制按钮图标相关
+        private Image normalRecordIcon = null; // 正常大小图标
+        private Image hoverRecordIcon = null; // 悬停时放大图标
         
         // GIF 设置
         private int gifFPS = 10;
@@ -151,19 +157,84 @@ namespace Sidebar
             btnOptions.Click += BtnOptions_Click;
             this.Controls.Add(btnOptions);
             
-            // 录制按钮（使用🔘图标）- 等间距
+            // 录制按钮（使用 PNG 图片）- 等间距
             int recordX = btnOptions.Right + spacing;
             btnRecord = new Button();
-            btnRecord.Text = "🔘";
             btnRecord.Size = new Size(recordButtonSize, recordButtonSize);
             
-            // 应用特殊按钮样式（样式与逻辑分离）
-            StyleManager.ConfigureSpecialButton(
-                btnRecord, 
-                StyleManager.ThemeColors.RecordButtonRed, 
-                StyleManager.ThemeFonts.RecordButtonEmoji, 
-                transparentBackground: true
-            );
+            // 加载 PNG 图片（尝试多个可能的路径）
+            bool imageLoaded = false;
+            string[] possiblePaths = new string[]
+            {
+                Path.Combine(Application.StartupPath, "icons", "rec.png"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icons", "rec.png"),
+                Path.Combine(Application.StartupPath, "..", "..", "..", "icons", "rec.png"), // 开发环境
+                "icons/rec.png" // 相对路径
+            };
+            
+            foreach (string iconPath in possiblePaths)
+            {
+                if (File.Exists(iconPath))
+                {
+                    try
+                    {
+                        Image originalImage = Image.FromFile(iconPath);
+                        
+                        // 先设置按钮基本属性
+                        btnRecord.FlatStyle = FlatStyle.Flat;
+                        btnRecord.FlatAppearance.BorderSize = 0;
+                        btnRecord.UseVisualStyleBackColor = false;
+                        btnRecord.Text = ""; // 不使用文本，使用图片
+                        
+                        // 创建正常大小图标（按钮大小的 70%）
+                        int normalImageSize = (int)(recordButtonSize * 0.7f);
+                        normalRecordIcon = new Bitmap(originalImage, normalImageSize, normalImageSize);
+                        
+                        // 创建悬停时放大图标（按钮大小的 85%，稍微放大）
+                        int hoverImageSize = (int)(recordButtonSize * 0.85f);
+                        hoverRecordIcon = new Bitmap(originalImage, hoverImageSize, hoverImageSize);
+                        
+                        originalImage.Dispose(); // 释放原始图片
+                        
+                        // 设置初始图片（正常大小）
+                        btnRecord.Image = normalRecordIcon;
+                        btnRecord.ImageAlign = ContentAlignment.MiddleCenter;
+                        
+                        // 设置透明背景（使用窗口的背景色）
+                        // 注意：Button 控件不支持真正的透明，只能使用与父控件相同的背景色
+                        Color windowBackColor = ShareXResources.Theme.BackgroundColor;
+                        btnRecord.BackColor = windowBackColor;
+                        btnRecord.FlatAppearance.MouseOverBackColor = windowBackColor; // 悬停时也保持窗口背景色
+                        btnRecord.FlatAppearance.MouseDownBackColor = windowBackColor; // 按下时也保持窗口背景色
+                        
+                        imageLoaded = true;
+                        System.Diagnostics.Debug.WriteLine($"成功加载录制按钮图片: {iconPath}, 背景色: {windowBackColor}");
+                        break; // 找到图片后退出循环
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"加载录制按钮图片失败 ({iconPath}): {ex.Message}");
+                    }
+                }
+            }
+            
+            if (!imageLoaded)
+            {
+                System.Diagnostics.Debug.WriteLine($"未找到录制按钮图片，尝试的路径: {string.Join(", ", possiblePaths)}");
+                // 如果图片未加载，使用 Emoji 样式
+                StyleManager.ConfigureSpecialButton(
+                    btnRecord, 
+                    StyleManager.ThemeColors.RecordButtonRed, 
+                    StyleManager.ThemeFonts.RecordButtonEmoji, 
+                    transparentBackground: true
+                );
+                btnRecord.Text = "🔘";
+            }
+            else
+            {
+                // 图片加载成功，确保背景色正确（在控件添加到父容器后再次设置）
+                // 这将在控件添加到父容器后通过事件处理
+            }
             
             // 计算垂直位置，使与选项按钮水平中心对齐
             int optionsCenterY = btnOptions.Top + btnOptions.Height / 2;
@@ -172,7 +243,26 @@ namespace Sidebar
             
             btnRecord.Cursor = Cursors.Hand;
             btnRecord.Click += BtnRecord_Click;
+            
+            // 如果图片已加载，添加鼠标悬停事件处理
+            if (imageLoaded)
+            {
+                btnRecord.MouseEnter += BtnRecord_MouseEnter;
+                btnRecord.MouseLeave += BtnRecord_MouseLeave;
+            }
+            
             this.Controls.Add(btnRecord);
+            
+            // 在控件添加到父容器后，确保所有状态都使用窗口背景色
+            if (imageLoaded)
+            {
+                // 使用窗口的实际背景色（此时窗口已完全初始化）
+                Color windowBackColor = this.BackColor;
+                btnRecord.BackColor = windowBackColor;
+                btnRecord.FlatAppearance.MouseOverBackColor = windowBackColor; // 悬停时也保持窗口背景色
+                btnRecord.FlatAppearance.MouseDownBackColor = windowBackColor; // 按下时也保持窗口背景色
+                System.Diagnostics.Debug.WriteLine($"按钮添加到父容器后，设置背景色: {windowBackColor}, R:{windowBackColor.R}, G:{windowBackColor.G}, B:{windowBackColor.B}");
+            }
             
             this.ResumeLayout(false);
         }
@@ -189,6 +279,33 @@ namespace Sidebar
             }
         }
         
+        
+        // 录制按钮鼠标进入事件（图标放大）
+        private void BtnRecord_MouseEnter(object sender, EventArgs e)
+        {
+            if (hoverRecordIcon != null)
+            {
+                btnRecord.Image = hoverRecordIcon;
+            }
+            
+            // 确保悬停时背景色保持为窗口背景色（透明效果）
+            Color windowBackColor = this.BackColor;
+            btnRecord.BackColor = windowBackColor;
+            btnRecord.FlatAppearance.MouseOverBackColor = windowBackColor;
+        }
+        
+        // 录制按钮鼠标离开事件（图标恢复）
+        private void BtnRecord_MouseLeave(object sender, EventArgs e)
+        {
+            if (normalRecordIcon != null)
+            {
+                btnRecord.Image = normalRecordIcon;
+            }
+            
+            // 确保离开时背景色保持为窗口背景色
+            Color windowBackColor = this.BackColor;
+            btnRecord.BackColor = windowBackColor;
+        }
         
         private void BtnRecord_Click(object sender, EventArgs e)
         {

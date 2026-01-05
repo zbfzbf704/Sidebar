@@ -10,7 +10,7 @@
     ---
     
     Copyright (c) 2025 蝴蝶哥
-    Email: your-email@example.com
+    Email: 1780555120@qq.com
     
     This code is part of the Sidebar application.
     All rights reserved.

@@ -25,7 +25,7 @@
     ---
     
     Copyright (c) 2025 蝴蝶哥
-    Email: your-email@example.com
+    Email: 1780555120@qq.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -165,12 +165,21 @@ namespace Sidebar
         private const int EDGE_DETECTION_WIDTH = 5; // 边缘检测宽度（像素）
         
         // 锁定按钮相关
-        private const int LOCK_BUTTON_SIZE = 15; // 锁定按钮大小（像素）
+        // 使用 PNG 图标，大小与登录按钮相同
+        private const int LOCK_BUTTON_SIZE = 20; // 锁定按钮大小（像素）
         private const int LOCK_BUTTON_BOTTOM_MARGIN = 15; // 锁定按钮底部边距（像素）
         private const int LOCK_BUTTON_RIGHT_MARGIN = 3; // 锁定按钮右侧边距（像素）
         private Color lockButtonColorDefault = Color.FromArgb(255, 80, 80, 80); // #505050
         private Color lockButtonColorActive = Color.FromArgb(255, 0, 225, 16); // #00E110
         private bool isAutoHideLocked = true; // 自动隐藏是否锁定（默认锁定，不自动收缩）
+        
+        // 登录按钮相关
+        private const int LOGIN_BUTTON_SIZE = 20; // 登录按钮大小（像素）
+        private const int LOGIN_BUTTON_BOTTOM_MARGIN = 15; // 登录按钮底部边距（像素）
+        private const int LOGIN_BUTTON_LEFT_MARGIN = 10; // 登录按钮左侧边距（像素）
+        private AuthAPIClient authAPIClient; // 认证客户端
+        private bool isLoginButtonHovered = false; // 登录按钮是否悬停
+        private bool isLockButtonHovered = false;  // 锁定按钮是否悬停
         
         // 停靠位置
         private DockSide dockSide = DockSide.Right;
@@ -196,20 +205,19 @@ namespace Sidebar
         private List<SidebarButton> buttons = new List<SidebarButton>();
         private SidebarButton hoveredButton = null;
         
+        // 图标缓存（避免每次重绘时从磁盘加载）
+        private Dictionary<string, Image> iconCache = new Dictionary<string, Image>();
+        
         // 工具提示相关
         private TooltipForm tooltipForm = null;
         private Timer tooltipTimer; // 延迟显示工具提示的定时器
         private const int TOOLTIP_DELAY = 500; // 工具提示延迟显示时间（毫秒）
         
         // 图标模式：true = 使用 PNG 图片，false = 使用 Emoji
-        private bool usePngIcons = false; // 默认使用 Emoji，可以改为 true 使用 PNG
+        private bool usePngIcons = true; // 默认使用 PNG 图标，可以改为 false 使用 Emoji
         
-        // 图标缩放动画相关
-        private Timer iconScaleTimer;
-        private Dictionary<SidebarButton, float> buttonScales = new Dictionary<SidebarButton, float>();
+        // 图标缩放（简化版本，无动画）
         private const float TARGET_SCALE = 1.3f; // 目标放大倍数（30%）
-        private const float ANIMATION_DURATION = 200f; // 动画持续时间（毫秒）
-        private Dictionary<SidebarButton, long> animationStartTimes = new Dictionary<SidebarButton, long>();
         
         // 自动收缩相关
         private Timer autoHideTimer; // 自动隐藏定时器
@@ -237,10 +245,14 @@ namespace Sidebar
         private Dictionary<string, HotkeyInfo> registeredHotkeys = new Dictionary<string, HotkeyInfo>();
         private Dictionary<string, HotkeyConfig> hotkeyConfigs = new Dictionary<string, HotkeyConfig>();
         
+        // 配置相关：用于保存侧边栏停靠位置等
+        private const string CONFIG_FILE_NAME = "sidebar_config.json";
+        
         public SidebarForm()
         {
             InitializeComponent();
             InitializeGlobalHotkeys(); // 先初始化全局快捷键管理器
+            LoadSidebarConfig();       // 读取侧边栏配置（包括停靠位置）
             InitializeSidebar(); // 然后初始化侧边栏（会注册快捷键）
         }
         
@@ -265,11 +277,6 @@ namespace Sidebar
             animationTimer = new Timer();
             animationTimer.Interval = 16; // ~60fps
             animationTimer.Tick += AnimationTimer_Tick;
-            
-            // 图标缩放动画定时器
-            iconScaleTimer = new Timer();
-            iconScaleTimer.Interval = 16; // ~60fps
-            iconScaleTimer.Tick += IconScaleTimer_Tick;
             
             // 自动隐藏定时器（提高检测频率以提升响应速度）
             autoHideTimer = new Timer();
@@ -308,6 +315,389 @@ namespace Sidebar
                 {
                     UpdateLayeredWindowBitmap();
                 }
+            }
+            
+            // 初始化认证客户端
+            if (authAPIClient == null)
+            {
+                authAPIClient = new AuthAPIClient();
+            }
+            
+            // 延迟检查订阅状态、更新和通知（避免阻塞界面加载）
+            Task.Run(async () =>
+            {
+                await Task.Delay(1000); // 延迟1秒检查
+                
+                // 在主线程中检查订阅状态
+                this.Invoke((System.Windows.Forms.MethodInvoker)delegate
+                {
+                    CheckSubscriptionOnStartup();
+                });
+                
+                // 检查软件更新
+                await Task.Delay(2000); // 再延迟1秒检查更新
+                this.Invoke((System.Windows.Forms.MethodInvoker)delegate
+                {
+                    CheckUpdateOnStartup();
+                });
+                
+                // 检查通知
+                await Task.Delay(3000); // 再延迟1秒检查通知
+                this.Invoke((System.Windows.Forms.MethodInvoker)delegate
+                {
+                    CheckNotificationsOnStartup();
+                });
+            });
+        }
+        
+        /// <summary>
+        /// 在应用启动时检查订阅状态
+        /// </summary>
+        private void CheckSubscriptionOnStartup()
+        {
+            try
+            {
+                if (authAPIClient == null)
+                {
+                    authAPIClient = new AuthAPIClient();
+                }
+                
+                // 如果已登录，先刷新订阅状态
+                if (authAPIClient.IsLoggedIn)
+                {
+                    Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await authAPIClient.RefreshSubscriptionAsync();
+                        }
+                        catch (Exception ex)
+                        {
+#if DEBUG
+                            System.Diagnostics.Debug.WriteLine($"启动时刷新订阅状态失败：{ex.Message}");
+#endif
+                        }
+                    });
+                }
+                
+                // 检查订阅是否有效
+                if (!authAPIClient.IsSubscriptionValid())
+                {
+                    // 试用期已过期，显示提示
+                    int remainingDays = authAPIClient.GetRemainingTrialDays();
+                    string message = "试用期已到期，请购买套餐继续使用。\n\n是否立即购买套餐？";
+                    
+                    if (remainingDays > 0)
+                    {
+                        message = $"试用期剩余 {remainingDays} 天，但功能已受限。\n\n" + message;
+                    }
+                    
+                    var result = MessageBox.Show(message, "订阅提醒", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    if (result == DialogResult.Yes)
+                    {
+                        // 打开购买套餐窗口
+                        using (var purchaseForm = new PurchasePlanForm(authAPIClient))
+                        {
+                            purchaseForm.ShowDialog();
+                            
+                            // 支付成功后刷新订阅状态
+                            Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await authAPIClient.RefreshSubscriptionAsync();
+                                    this.Invoke((System.Windows.Forms.MethodInvoker)delegate
+                                    {
+                                        UpdateLayeredWindowBitmap(); // 刷新界面
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+#if DEBUG
+                                    System.Diagnostics.Debug.WriteLine($"刷新订阅状态失败：{ex.Message}");
+#endif
+                                }
+                            });
+                        }
+                    }
+                }
+                else
+                {
+                    // 检查剩余试用期天数，如果少于7天则提示
+                    int remainingDays = authAPIClient.GetRemainingTrialDays();
+                    if (remainingDays > 0 && remainingDays <= 7 && 
+                        authAPIClient.SubscriptionType != "plan1" && 
+                        authAPIClient.SubscriptionType != "plan2")
+                    {
+                        string message = $"试用期剩余 {remainingDays} 天，建议尽快购买套餐以避免功能受限。\n\n是否立即购买套餐？";
+                        var result = MessageBox.Show(message, "试用期提醒", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                        if (result == DialogResult.Yes)
+                        {
+                            // 打开购买套餐窗口
+                            using (var purchaseForm = new PurchasePlanForm(authAPIClient))
+                            {
+                                purchaseForm.ShowDialog();
+                                
+                                // 支付成功后刷新订阅状态
+                                Task.Run(async () =>
+                                {
+                                    try
+                                    {
+                                        await authAPIClient.RefreshSubscriptionAsync();
+                                        this.Invoke((System.Windows.Forms.MethodInvoker)delegate
+                                        {
+                                            UpdateLayeredWindowBitmap(); // 刷新界面
+                                        });
+                                    }
+                                catch (Exception ex)
+                                {
+#if DEBUG
+                                    System.Diagnostics.Debug.WriteLine($"刷新订阅状态失败：{ex.Message}");
+#endif
+                                }
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"启动时检查订阅状态异常：{ex.Message}");
+#endif
+                // 异常时不阻塞应用启动
+            }
+        }
+        
+        /// <summary>
+        /// 获取当前应用版本号
+        /// </summary>
+        private string GetCurrentVersion()
+        {
+            try
+            {
+                return ShareX.HelpersLib.Helpers.GetApplicationVersion();
+            }
+            catch
+            {
+                // 如果获取失败，返回默认版本
+                return "1.0.0";
+            }
+        }
+        
+        /// <summary>
+        /// 在应用启动时检查软件更新（根据服务端实现）
+        /// </summary>
+        private async void CheckUpdateOnStartup()
+        {
+            try
+            {
+                if (authAPIClient == null)
+                {
+                    authAPIClient = new AuthAPIClient();
+                }
+                
+                string currentVersion = GetCurrentVersion();
+                var result = await authAPIClient.CheckUpdateAsync(currentVersion);
+                
+                if (result.Success && result.Data != null && result.Data.Count > 0)
+                {
+                    string latestVersion = result.Data.ContainsKey("latest_version") ? 
+                                         result.Data["latest_version"]?.ToString() : currentVersion;
+                    string updateUrl = result.Data.ContainsKey("update_url") ? 
+                                     result.Data["update_url"]?.ToString() : "";
+                    string updateStrategy = result.Data.ContainsKey("update_strategy") ? 
+                                          result.Data["update_strategy"]?.ToString() : "none";
+                    bool isRequired = false;
+                    if (result.Data.ContainsKey("is_required"))
+                    {
+                        var isRequiredValue = result.Data["is_required"];
+                        if (isRequiredValue is bool)
+                        {
+                            isRequired = (bool)isRequiredValue;
+                        }
+                        else
+                        {
+                            isRequired = Convert.ToBoolean(isRequiredValue);
+                        }
+                    }
+                    string updateNotes = result.Data.ContainsKey("update_notes") ? 
+                                       result.Data["update_notes"]?.ToString() : "";
+                    
+                    // 判断是否需要显示更新提示
+                    // 1. 强制更新：无论版本如何，只要 is_required 为 true 或 update_strategy 为 "required"，都必须显示
+                    // 2. 可选更新：只有当最新版本大于当前版本时才显示
+                    bool isForceUpdate = isRequired || updateStrategy == "required";
+                    bool hasUpdate = false;
+                    
+                    if (!string.IsNullOrEmpty(latestVersion) && latestVersion != currentVersion)
+                    {
+                        try
+                        {
+                            int compareResult = ShareX.HelpersLib.Helpers.CompareVersion(latestVersion, currentVersion);
+                            hasUpdate = compareResult > 0; // 最新版本大于当前版本
+                        }
+                        catch
+                        {
+                            // 版本比较失败，使用字符串比较
+                            hasUpdate = latestVersion != currentVersion;
+                        }
+                    }
+                    
+                    // 强制更新：即使版本相同或更低，只要设置了强制更新，也要显示
+                    // 可选更新：只有版本更新时才显示
+                    bool shouldShowUpdate = isForceUpdate || (hasUpdate && !string.IsNullOrEmpty(updateUrl));
+                    
+                    if (shouldShowUpdate && !string.IsNullOrEmpty(updateUrl))
+                    {
+                        // 构建更新消息
+                        string message = "";
+                        if (hasUpdate)
+                        {
+                            message = $"发现新版本 {latestVersion}\n\n当前版本：{currentVersion}\n最新版本：{latestVersion}";
+                        }
+                        else if (isForceUpdate)
+                        {
+                            // 强制更新但版本可能相同（可能是修复bug的强制更新）
+                            message = $"需要更新到版本 {latestVersion}\n\n当前版本：{currentVersion}\n目标版本：{latestVersion}";
+                        }
+                        else
+                        {
+                            message = $"发现更新\n\n当前版本：{currentVersion}";
+                        }
+                        
+                        if (!string.IsNullOrEmpty(updateNotes))
+                        {
+                            message += $"\n\n更新说明：\n{updateNotes}";
+                        }
+                        
+                        if (isForceUpdate)
+                        {
+                            // 强制更新：必须更新
+                            message += "\n\n此更新为强制更新，必须更新后才能继续使用。";
+                            var dialogResult = MessageBox.Show(message, "强制更新", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                            if (dialogResult == DialogResult.OK)
+                            {
+                                // 打开下载链接
+                                try
+                                {
+                                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                                    {
+                                        FileName = updateUrl,
+                                        UseShellExecute = true
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+                                    ShowNotification($"打开下载链接失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
+                                }
+                            }
+                        }
+                        else if (hasUpdate)
+                        {
+                            // 可选更新：只有版本更新时才显示
+                            var dialogResult = MessageBox.Show(message + "\n\n是否立即下载？", "软件更新", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                            if (dialogResult == DialogResult.Yes)
+                            {
+                                // 打开下载链接
+                                try
+                                {
+                                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                                    {
+                                        FileName = updateUrl,
+                                        UseShellExecute = true
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+                                    ShowNotification($"打开下载链接失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"检查更新失败：{ex.Message}");
+#endif
+                // 静默失败，不影响应用启动
+            }
+        }
+        
+        /// <summary>
+        /// 在应用启动时检查通知（根据服务端实现：返回单个通知对象）
+        /// </summary>
+        private async void CheckNotificationsOnStartup()
+        {
+            try
+            {
+                if (authAPIClient == null)
+                {
+                    authAPIClient = new AuthAPIClient();
+                }
+                
+                var result = await authAPIClient.GetNotificationsAsync();
+                
+                // 服务端返回 data: null 表示没有通知
+                if (result.Success && result.Data != null && result.Data.Count > 0)
+                {
+                    // 服务端返回单个通知对象，不是列表
+                    var notification = result.Data;
+                    
+                    string title = notification.ContainsKey("title") ? 
+                                 notification["title"]?.ToString() : "通知";
+                    string subtitle = notification.ContainsKey("subtitle") ? 
+                                    notification["subtitle"]?.ToString() : "";
+                    string notificationId = notification.ContainsKey("id") ? 
+                                          notification["id"]?.ToString() : "";
+                    int displayDuration = notification.ContainsKey("display_duration") ? 
+                                        Convert.ToInt32(notification["display_duration"]) : 0;
+                    bool autoDismiss = notification.ContainsKey("auto_dismiss") && 
+                                     Convert.ToBoolean(notification["auto_dismiss"]);
+                    string clickAction = notification.ContainsKey("click_action") ? 
+                                       notification["click_action"]?.ToString() : "url";
+                    string url = notification.ContainsKey("url") ? 
+                               notification["url"]?.ToString() : "";
+                    
+                    // 构建通知内容（优先使用subtitle，如果没有则使用title）
+                    string content = !string.IsNullOrEmpty(subtitle) ? subtitle : title;
+                    
+                    if (!string.IsNullOrEmpty(content))
+                    {
+                        // 计算显示时长（秒转毫秒，0表示永久显示）
+                        int duration = displayDuration > 0 ? displayDuration * 1000 : 5000;
+                        if (duration <= 0) duration = 5000; // 默认5秒
+                        
+                        // 根据点击行为设置通知
+                        // 服务端支持 url 和 html_popup 两种点击行为
+                        if (clickAction == "url" && !string.IsNullOrEmpty(url))
+                        {
+                            // 点击打开URL
+                            ShowNotification(content, title, duration, MessageBoxIcon.Information, url, ToastClickAction.OpenUrl);
+                        }
+                        else if (clickAction == "html_popup")
+                        {
+                            // HTML弹窗（暂不支持，显示通知但不跳转）
+                            // 可以后续实现HTML弹窗功能
+                            ShowNotification(content, title, duration, MessageBoxIcon.Information);
+                        }
+                        else
+                        {
+                            // 默认行为：点击关闭通知
+                            ShowNotification(content, title, duration, MessageBoxIcon.Information);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"检查通知失败：{ex.Message}");
+#endif
+                // 静默失败，不影响应用启动
             }
         }
         
@@ -388,8 +778,15 @@ namespace Sidebar
         
         private void InitializeSidebar()
         {
-            // 初始位置：右侧
-            DockToRight();
+            // 根据保存的配置设置初始位置（如果已加载配置，使用配置的位置；否则默认右侧）
+            if (dockSide == DockSide.Left)
+            {
+                DockToLeft();
+            }
+            else
+            {
+                DockToRight();
+            }
             
             // 添加常用工具图标按钮
             // 使用方式：
@@ -400,71 +797,71 @@ namespace Sidebar
             // 桌面图标（最顶部）
             AddToolButton("桌面", "🖥️", () => {
                 OpenDesktop();
-            });
+            }, "icons/01-zhuomian.png");
             
             AddToolButton("截图", "📷", () => {
                 CaptureRegionAndSave();
-            }); // 可以添加第四个参数，如 "icons/screenshot.png"
+            }, "icons/02-jietu.png");
             
             AddToolButton("滚动截图", "📜", () => {
                 CaptureScrollingAndSave();
-            }); // 滚动截图功能
+            }, "icons/03-gundong.png");
             
             AddToolButton("录制", "🎬", () => {
                 ShowRecordSettings();
-            }); // 屏幕录制功能
+            }, "icons/04-luzhi.png");
             
             AddToolButton("Pin", "📌", () => {
                 PinToScreenFromScreen();
-            }); // Pin to Screen 功能
+            }, "icons/05-pin.png");
             
             AddToolButton("颜色选择器", "🎨", () => {
                 OpenScreenColorPicker();
-            }); // 屏幕拾色器功能
+            }, "icons/06-shiqu.png");
             
             AddToolButton("尺子", "📏", () => {
                 OpenScreenRuler();
-            }); // 屏幕尺子功能
+            }, "icons/07-chizi.png");
             
             AddToolButton("图像美化", "✨", () => {
                 OpenImageBeautifier();
-            }); // 图像美化功能
+            }, "icons/08-meihua.png");
             
             AddToolButton("图片特效", "🎭", () => {
                 OpenImageEffects();
-            }); // 图片特效功能
+            }, "icons/09-texiao.png");
             
             AddToolButton("图像编辑器", "✏️", () => {
                 OpenImageEditor();
-            }); // 图像编辑器功能
+            }, "icons/10-tuxiangbianji.png");
             
             AddToolButton("图像分割器", "✂️", () => {
                 OpenImageSplitter();
-            }); // 图像分割器功能
+            }, "icons/11-fenge.png");
             
             AddToolButton("图像合并", "🔗", () => {
                 OpenImageCombiner();
-            }); // 图像合并功能
+            }, "icons/12-hebing.png");
             
             AddToolButton("图像缩略图", "🖼️", () => {
                 OpenImageThumbnailer();
-            }); // 图像缩略图功能
+            }, "icons/13-suluetu.png");
             
             AddToolButton("视频转换器", "🎥", () => {
                 OpenVideoConverter();
-            }); // 视频转换器功能
+            }, "icons/14-geshizhuanha.png");
             
             AddToolButton("文件重命名", "📝", () => {
                 OpenFileRenamer();
-            }); // 文件重命名功能
+            }, "icons/15-congmingming.png");
             
             AddToolButton("系统清理", "🧹", () => {
                 OpenSystemCleaner();
-            }); // 系统清理功能
+            }, "icons/16-xitongqingli.png");
             
             AddToolButton("设置", "⚙️", () => {
                 OpenHotkeySettings();
-            }); // 设置窗口
+            }, "icons/17-shezhi.png");
             
             // 初始化全局快捷键（确保 globalHotkeyForm 句柄已创建）
             if (globalHotkeyForm != null)
@@ -504,6 +901,13 @@ namespace Sidebar
                 HideTooltip();
                 tooltipTimer.Stop();
                 
+                // 检查是否点击了登录按钮
+                if (IsLoginButtonClicked(e.Location))
+                {
+                    HandleLoginButtonClick();
+                    return;
+                }
+                
                 // 检查是否点击了锁定按钮
                 if (IsLockButtonClicked(e.Location))
                 {
@@ -515,7 +919,19 @@ namespace Sidebar
                 SidebarButton clickedButton = GetButtonAtPoint(e.Location);
                 if (clickedButton != null)
                 {
-                    clickedButton.OnClick();
+                    // 设置和桌面功能不需要检查订阅
+                    if (clickedButton.Name == "设置" || clickedButton.Name == "桌面")
+                    {
+                        clickedButton.OnClick();
+                    }
+                    else
+                    {
+                        // 其他功能需要检查订阅状态
+                        if (CheckSubscriptionBeforeAction(clickedButton.Name))
+                        {
+                            clickedButton.OnClick();
+                        }
+                    }
                     return;
                 }
                 
@@ -567,53 +983,78 @@ namespace Sidebar
                 
                 Location = newLocation;
             }
-            else if (!isCollapsed)
-            {
-                // 检查鼠标悬停（只在展开状态下，优化：提前判断避免嵌套）
-                SidebarButton button = GetButtonAtPoint(e.Location);
-                if (button != hoveredButton)
+                else if (!isCollapsed)
                 {
-                    // 如果之前有悬停的按钮，重置其动画时间
-                    if (hoveredButton != null && animationStartTimes.ContainsKey(hoveredButton))
-                    {
-                        animationStartTimes[hoveredButton] = DateTime.Now.Ticks / 10000;
-                    }
+                    // 检查登录按钮悬停
+                    bool wasLoginHovered = isLoginButtonHovered;
+                    isLoginButtonHovered = IsLoginButtonClicked(e.Location);
                     
-                    hoveredButton = button;
+                    // 检查锁定按钮悬停
+                    bool wasLockHovered = isLockButtonHovered;
+                    isLockButtonHovered = IsLockButtonClicked(e.Location);
                     
-                    // 重置当前按钮的动画开始时间，确保立即开始动画
-                    if (button != null)
-                    {
-                        animationStartTimes[button] = DateTime.Now.Ticks / 10000;
-                    }
-                    
-                    // 立即启动图标缩放动画，无延迟
-                    iconScaleTimer.Start();
-                    
-                    // 处理工具提示
-                    if (button != null)
+                    // 处理登录/锁定按钮的悬停提示
+                    if (isLoginButtonHovered || isLockButtonHovered)
                     {
                         // 停止之前的定时器
                         tooltipTimer.Stop();
                         // 隐藏之前的工具提示
                         HideTooltip();
-                        // 启动新的定时器
+                        
+                        // 启动新的定时器，在 Tick 中根据状态显示对应提示
                         tooltipTimer.Start();
+                        
+                        // 使用 UpdateLayeredWindow 时，需要直接调用更新方法
+                        if (IsHandleCreated && (wasLoginHovered != isLoginButtonHovered || wasLockHovered != isLockButtonHovered))
+                        {
+                            UpdateLayeredWindowBitmap();
+                        }
                     }
                     else
                     {
-                        // 鼠标不在按钮上，隐藏工具提示
-                        tooltipTimer.Stop();
-                        HideTooltip();
-                    }
-                    
-                    // 使用 UpdateLayeredWindow 时，需要直接调用更新方法
-                    if (IsHandleCreated)
-                    {
-                        UpdateLayeredWindowBitmap();
+                        // 鼠标不在登录/锁定按钮上
+                        if (wasLoginHovered || wasLockHovered)
+                        {
+                            // 离开底部按钮区域时隐藏提示并刷新
+                            tooltipTimer.Stop();
+                            HideTooltip();
+                            if (IsHandleCreated)
+                            {
+                                UpdateLayeredWindowBitmap();
+                            }
+                        }
+                        
+                        // 检查普通功能按钮悬停
+                        SidebarButton button = GetButtonAtPoint(e.Location);
+                        if (button != hoveredButton)
+                        {
+                            hoveredButton = button;
+                            
+                            // 处理工具提示
+                            if (button != null)
+                            {
+                                // 停止之前的定时器
+                                tooltipTimer.Stop();
+                                // 隐藏之前的工具提示
+                                HideTooltip();
+                                // 启动新的定时器
+                                tooltipTimer.Start();
+                            }
+                            else
+                            {
+                                // 鼠标不在按钮上，隐藏工具提示
+                                tooltipTimer.Stop();
+                                HideTooltip();
+                            }
+                            
+                            // 使用 UpdateLayeredWindow 时，需要直接调用更新方法
+                            if (IsHandleCreated)
+                            {
+                                UpdateLayeredWindowBitmap();
+                            }
+                        }
                     }
                 }
-            }
         }
         
         private void SidebarForm_MouseUp(object sender, MouseEventArgs e)
@@ -631,86 +1072,14 @@ namespace Sidebar
         private void SidebarForm_MouseLeave(object sender, EventArgs e)
         {
             hoveredButton = null;
+            isLoginButtonHovered = false;
+            isLockButtonHovered = false;
+            // 鼠标离开时，隐藏工具提示并停止定时器
+            tooltipTimer.Stop();
+            HideTooltip();
             // 鼠标离开时，图标缩放动画会继续运行直到回到原始大小
             // 使用 UpdateLayeredWindow 时，需要直接调用更新方法
             if (IsHandleCreated)
-            {
-                UpdateLayeredWindowBitmap();
-            }
-        }
-        
-        // 图标缩放动画定时器事件 - 使用基于时间的平滑缓动函数（消除抖动）
-        private void IconScaleTimer_Tick(object sender, EventArgs e)
-        {
-            long currentTime = DateTime.Now.Ticks / 10000; // 转换为毫秒
-            bool needUpdate = false;
-            bool allAtTarget = true;
-            
-            foreach (var button in buttons)
-            {
-                // 初始化缩放值
-                if (!buttonScales.ContainsKey(button))
-                {
-                    buttonScales[button] = 1.0f;
-                }
-                
-                float currentScale = buttonScales[button];
-                float targetScale = (button == hoveredButton) ? TARGET_SCALE : 1.0f;
-                
-                // 如果目标值改变，重置动画开始时间
-                if (!animationStartTimes.ContainsKey(button) || 
-                    Math.Abs(currentScale - targetScale) > 0.01f)
-                {
-                    // 检查是否需要重置动画（目标改变时）
-                    float lastTarget = (button == hoveredButton) ? TARGET_SCALE : 1.0f;
-                    if (!animationStartTimes.ContainsKey(button) || 
-                        Math.Abs(currentScale - lastTarget) < 0.01f)
-                    {
-                        animationStartTimes[button] = currentTime;
-                    }
-                }
-                
-                // 计算基于时间的缓动值
-                long startTime = animationStartTimes.ContainsKey(button) ? animationStartTimes[button] : currentTime;
-                long elapsed = currentTime - startTime;
-                float progress = Math.Min(1.0f, elapsed / ANIMATION_DURATION);
-                
-                // 使用 ease-out 缓动函数实现平滑过渡（消除抖动）
-                float easedProgress = 1.0f - (float)Math.Pow(1.0f - progress, 3); // cubic ease-out
-                
-                // 计算起始值和目标值
-                float startScale = 1.0f; // 总是从1.0开始
-                if (progress < 0.01f && Math.Abs(currentScale - 1.0f) > 0.01f && Math.Abs(currentScale - TARGET_SCALE) > 0.01f)
-                {
-                    // 如果动画刚开始且当前值不在起始或目标值，从当前值开始
-                    startScale = currentScale;
-                }
-                
-                // 计算新的缩放值
-                float newScale = startScale + (targetScale - startScale) * easedProgress;
-                
-                // 只有当变化足够大时才更新，避免微小抖动
-                if (Math.Abs(newScale - currentScale) > 0.0001f)
-                {
-                    buttonScales[button] = newScale;
-                    needUpdate = true;
-                }
-                
-                // 检查是否到达目标
-                if (progress < 0.99f || Math.Abs(newScale - targetScale) > 0.01f)
-                {
-                    allAtTarget = false;
-                }
-            }
-            
-            // 如果所有按钮都达到目标值，停止定时器
-            if (allAtTarget)
-            {
-                iconScaleTimer.Stop();
-            }
-            
-            // 如果需要更新，刷新窗口
-            if (needUpdate && IsHandleCreated)
             {
                 UpdateLayeredWindowBitmap();
             }
@@ -775,6 +1144,9 @@ namespace Sidebar
             isAnimating = true;
             currentAnimationStep = 0;
             animationTimer.Start();
+            
+            // 保存新的停靠位置
+            SaveSidebarConfig();
         }
         
         private void AnimationTimer_Tick(object sender, EventArgs e)
@@ -813,6 +1185,9 @@ namespace Sidebar
             dockSide = DockSide.Left;
             UpdateSize();
             Invalidate();
+            
+            // 保存新的停靠位置
+            SaveSidebarConfig();
         }
         
         private void DockToRight()
@@ -825,6 +1200,9 @@ namespace Sidebar
             dockSide = DockSide.Right;
             UpdateSize();
             Invalidate();
+            
+            // 保存新的停靠位置
+            SaveSidebarConfig();
         }
         
         private void UpdateSize()
@@ -885,6 +1263,9 @@ namespace Sidebar
             
             // 绘制图标按钮
             DrawButtons(g);
+                    
+                    // 绘制登录按钮（在底部左侧）
+                    DrawLoginButton(g);
                     
                     // 绘制锁定按钮（在底部右侧）
                     DrawLockButton(g);
@@ -1049,6 +1430,85 @@ namespace Sidebar
             Invalidate();
         }
         
+        /// <summary>
+        /// 检查订阅状态，如果过期则提示购买套餐
+        /// </summary>
+        private bool CheckSubscriptionBeforeAction(string featureName = null)
+        {
+            try
+            {
+                if (authAPIClient == null)
+                {
+                    authAPIClient = new AuthAPIClient();
+                }
+                
+                // 检查订阅是否有效
+                if (!authAPIClient.IsSubscriptionValid())
+                {
+                    // 获取剩余试用期天数
+                    int remainingDays = authAPIClient.GetRemainingTrialDays();
+                    
+                    string message;
+                    if (remainingDays > 0)
+                    {
+                        message = $"试用期剩余 {remainingDays} 天，但功能已受限。\n\n请购买套餐以继续使用所有功能。";
+                    }
+                    else
+                    {
+                        message = "试用期已到期，请购买套餐继续使用。";
+                    }
+                    
+                    if (!string.IsNullOrEmpty(featureName))
+                    {
+                        message = $"使用\"{featureName}\"功能需要购买套餐。\n\n" + message;
+                    }
+                    
+                    message += "\n\n是否立即购买套餐？";
+                    
+                    var result = MessageBox.Show(message, "订阅已过期", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                    if (result == DialogResult.Yes)
+                    {
+                        // 打开购买套餐窗口
+                        using (var purchaseForm = new PurchasePlanForm(authAPIClient))
+                        {
+                            purchaseForm.ShowDialog();
+                            
+                            // 支付成功后刷新订阅状态
+                            Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    await authAPIClient.RefreshSubscriptionAsync();
+                                    this.Invoke((System.Windows.Forms.MethodInvoker)delegate
+                                    {
+                                        UpdateLayeredWindowBitmap(); // 刷新界面
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+#if DEBUG
+                                    System.Diagnostics.Debug.WriteLine($"刷新订阅状态失败：{ex.Message}");
+#endif
+                                }
+                            });
+                        }
+                    }
+                    
+                    return false;
+                }
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"检查订阅状态异常：{ex.Message}");
+#endif
+                // 异常时默认允许使用，避免误锁
+                return true;
+            }
+        }
+        
         // 添加工具按钮
         // 添加工具按钮（支持 Emoji 和 PNG 图片）
         private void AddToolButton(string name, string icon, Action onClick, string iconPath = null)
@@ -1061,8 +1521,6 @@ namespace Sidebar
                 OnClick = onClick
             };
             buttons.Add(button);
-            // 初始化按钮的缩放值
-            buttonScales[button] = 1.0f;
             
             // 保存工具按钮信息用于设置
             toolButtonInfos.Add(new ToolButtonInfo
@@ -1241,6 +1699,74 @@ namespace Sidebar
             return Path.Combine(appDataPath, "hotkeys.json");
         }
         
+        // 获取侧边栏配置文件路径（用于保存停靠位置等）
+        private string GetSidebarConfigPath()
+        {
+            string appDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Sidebar");
+            if (!Directory.Exists(appDataPath))
+            {
+                Directory.CreateDirectory(appDataPath);
+            }
+            return Path.Combine(appDataPath, CONFIG_FILE_NAME);
+        }
+        
+        // 加载侧边栏配置（当前只保存 dockSide 左/右）
+        private void LoadSidebarConfig()
+        {
+            try
+            {
+                string configPath = GetSidebarConfigPath();
+                if (!File.Exists(configPath))
+                {
+                    return;
+                }
+                
+                string json = File.ReadAllText(configPath);
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    return;
+                }
+                
+                // 配置结构非常简单，仅包含 dockSide 字段
+                var config = JsonConvert.DeserializeObject<SidebarConfig>(json);
+                if (config != null)
+                {
+                    if (config.DockSide == "Left")
+                    {
+                        dockSide = DockSide.Left;
+                    }
+                    else if (config.DockSide == "Right")
+                    {
+                        dockSide = DockSide.Right;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("加载侧边栏配置失败", ex);
+            }
+        }
+        
+        // 保存侧边栏配置（当前只保存 dockSide 左/右）
+        private void SaveSidebarConfig()
+        {
+            try
+            {
+                string configPath = GetSidebarConfigPath();
+                var config = new SidebarConfig
+                {
+                    DockSide = dockSide == DockSide.Left ? "Left" : "Right"
+                };
+                
+                string json = JsonConvert.SerializeObject(config, Formatting.Indented);
+                File.WriteAllText(configPath, json, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                LogError("保存侧边栏配置失败", ex);
+            }
+        }
+        
         // 注册所有快捷键
         private void RegisterAllHotkeys()
         {
@@ -1318,23 +1844,24 @@ namespace Sidebar
         private void LogError(string message, Exception ex = null)
         {
 #if DEBUG
-            if (!ENABLE_DEBUG_LOGGING) return;
-            
-            try
+            if (ENABLE_DEBUG_LOGGING)
             {
-                string logMessage = ex != null 
-                    ? $"{message}: {ex.Message}" 
-                    : message;
-                System.Diagnostics.Debug.WriteLine($"[Sidebar] {logMessage}");
-                
-                if (ex != null)
+                try
                 {
-                    System.Diagnostics.Debug.WriteLine($"StackTrace: {ex.StackTrace}");
+                    string logMessage = ex != null 
+                        ? $"{message}: {ex.Message}" 
+                        : message;
+                    System.Diagnostics.Debug.WriteLine($"[Sidebar] {logMessage}");
+                    
+                    if (ex != null)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"StackTrace: {ex.StackTrace}");
+                    }
                 }
-            }
-            catch
-            {
-                // 忽略日志记录失败
+                catch
+                {
+                    // 忽略日志记录失败
+                }
             }
 #endif
         }
@@ -1381,6 +1908,74 @@ namespace Sidebar
             return null;
         }
         
+        // 获取缓存的图标，如果不存在则加载
+        private Image GetCachedIcon(string iconPath)
+        {
+            if (string.IsNullOrEmpty(iconPath) || !File.Exists(iconPath))
+            {
+                return null;
+            }
+            
+            // 检查缓存
+            if (iconCache != null && iconCache.ContainsKey(iconPath))
+            {
+                return iconCache[iconPath];
+            }
+            
+            // 加载图标并添加到缓存
+            try
+            {
+                Image icon = Image.FromFile(iconPath);
+                if (iconCache == null)
+                {
+                    iconCache = new Dictionary<string, Image>();
+                }
+                iconCache[iconPath] = icon;
+                return icon;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+        
+        /// <summary>
+        /// 使用颜色矩阵给图标着色（用于锁定按钮绿色/白色效果）
+        /// </summary>
+        private void DrawColoredIcon(Graphics g, Image icon, Rectangle rect, Color color)
+        {
+            if (icon == null) return;
+            
+            using (ImageAttributes attrs = new ImageAttributes())
+            {
+                float r = color.R / 255f;
+                float gChannel = color.G / 255f;
+                float b = color.B / 255f;
+                
+                ColorMatrix matrix = new ColorMatrix(new float[][]
+                {
+                    new float[] { r,        0f,       0f, 0f, 0f },
+                    new float[] { 0f,  gChannel,       0f, 0f, 0f },
+                    new float[] { 0f,        0f,       b, 0f, 0f },
+                    new float[] { 0f,        0f,     0f, 1f, 0f },
+                    new float[] { 0f,        0f,     0f, 0f, 1f }
+                });
+                
+                attrs.SetColorMatrix(matrix);
+                
+                g.DrawImage(
+                    icon,
+                    rect,
+                    0,
+                    0,
+                    icon.Width,
+                    icon.Height,
+                    GraphicsUnit.Pixel,
+                    attrs
+                );
+            }
+        }
+        
         // 绘制按钮
         private void DrawButtons(Graphics g)
         {
@@ -1416,8 +2011,8 @@ namespace Sidebar
                 // }
                 
                 // 绘制图标（支持 PNG 图片和 Emoji）
-                // 使用动画缩放值，实现平滑过渡
-                float scale = buttonScales.ContainsKey(button) ? buttonScales[button] : 1.0f;
+                // 简单的缩放逻辑：悬停时放大，否则正常大小
+                float scale = (button == hoveredButton) ? TARGET_SCALE : 1.0f;
                 
                 // 使用浮点数计算，避免整数截断导致的抖动
                 float scaledSize = ICON_SIZE * scale;
@@ -1436,16 +2031,28 @@ namespace Sidebar
                 
                 if (usePng)
                 {
-                    // 绘制 PNG 图片
+                    // 绘制 PNG 图片（使用原始颜色）
                     try
                     {
-                        using (Image iconImage = Image.FromFile(button.IconPath))
+                        // 从缓存获取图标，如果不存在则加载
+                        Image iconImage = GetCachedIcon(button.IconPath);
+                        if (iconImage != null)
                         {
                             // 高质量缩放
                             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
                             g.SmoothingMode = SmoothingMode.HighQuality;
                             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                            g.DrawImage(iconImage, iconRect);
+                            
+                            // 直接绘制图标，不使用颜色变换
+                            g.DrawImage(iconImage, 
+                                new Rectangle((int)iconRect.X, (int)iconRect.Y, (int)iconRect.Width, (int)iconRect.Height),
+                                0, 0, iconImage.Width, iconImage.Height,
+                                GraphicsUnit.Pixel);
+                        }
+                        else
+                        {
+                            // 如果图标加载失败，回退到 Emoji
+                            DrawEmojiIcon(g, button.Icon, iconRect, scale);
                         }
                     }
                     catch
@@ -1501,7 +2108,7 @@ namespace Sidebar
             return new Rectangle(buttonX, buttonY, LOCK_BUTTON_SIZE, LOCK_BUTTON_SIZE);
         }
         
-        // 绘制锁定按钮（在底部右侧，带立体效果）
+        // 绘制锁定按钮（在底部右侧，使用 PNG 图标，锁定时为绿色，未锁定时为白色）
         private void DrawLockButton(Graphics g)
         {
             if (isCollapsed) return;
@@ -1510,24 +2117,58 @@ namespace Sidebar
             SmoothingMode oldSmoothing = g.SmoothingMode;
             g.SmoothingMode = SmoothingMode.AntiAlias;
             
-            if (isAutoHideLocked)
+            // 图标路径：尝试多个可能的路径
+            string iconPath = null;
+            string[] possiblePaths = new string[]
             {
-                // 锁定状态：绿色，带阴影和边框
-                Rectangle shadowRect = new Rectangle(buttonRect.X + 1, buttonRect.Y + 1, buttonRect.Width, buttonRect.Height);
-                using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(80, Color.Black)))
-                    g.FillEllipse(shadowBrush, shadowRect);
-                
-                using (SolidBrush brush = new SolidBrush(lockButtonColorActive))
-                    g.FillEllipse(brush, buttonRect);
-                
-                using (Pen borderPen = new Pen(Color.FromArgb(150, Color.Black), 0.5f))
-                    g.DrawEllipse(borderPen, buttonRect);
+                Path.Combine(Application.StartupPath, "icons", "suoding.png"),
+                Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "icons", "suoding.png"),
+                Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "icons", "suoding.png")
+            };
+            
+            foreach (string path in possiblePaths)
+            {
+                if (File.Exists(path))
+                {
+                    iconPath = path;
+                    break;
+                }
+            }
+            
+            Image icon = null;
+            if (!string.IsNullOrEmpty(iconPath))
+            {
+                icon = GetCachedIcon(iconPath);
+            }
+            
+            if (icon != null)
+            {
+                // 根据锁定状态选择颜色：锁定 = 绿色，未锁定 = 白色
+                Color iconColor = isAutoHideLocked ? Color.FromArgb(0, 225, 16) : Color.White;
+                DrawColoredIcon(g, icon, buttonRect, iconColor);
             }
             else
             {
-                // 默认状态：与背景色一致，无边框
-                using (SolidBrush brush = new SolidBrush(backgroundColor))
-                    g.FillEllipse(brush, buttonRect);
+                // 如果图标加载失败，回退为原来的圆形指示
+                if (isAutoHideLocked)
+                {
+                    // 锁定状态：绿色，带阴影和边框
+                    Rectangle shadowRect = new Rectangle(buttonRect.X + 1, buttonRect.Y + 1, buttonRect.Width, buttonRect.Height);
+                    using (SolidBrush shadowBrush = new SolidBrush(Color.FromArgb(80, Color.Black)))
+                        g.FillEllipse(shadowBrush, shadowRect);
+                    
+                    using (SolidBrush brush = new SolidBrush(lockButtonColorActive))
+                        g.FillEllipse(brush, buttonRect);
+                    
+                    using (Pen borderPen = new Pen(Color.FromArgb(150, Color.Black), 0.5f))
+                        g.DrawEllipse(borderPen, buttonRect);
+                }
+                else
+                {
+                    // 默认状态：与背景色一致，无边框
+                    using (SolidBrush brush = new SolidBrush(backgroundColor))
+                        g.FillEllipse(brush, buttonRect);
+                }
             }
             
             g.SmoothingMode = oldSmoothing;
@@ -1546,6 +2187,229 @@ namespace Sidebar
             int dx = point.X - centerX;
             int dy = point.Y - centerY;
             return dx * dx + dy * dy <= radius * radius;
+        }
+        
+        // 获取登录按钮位置
+        private Rectangle GetLoginButtonRect()
+        {
+            int buttonX = SHADOW_SIZE + LOGIN_BUTTON_LEFT_MARGIN;
+            int buttonY = Height - SHADOW_SIZE - LOGIN_BUTTON_BOTTOM_MARGIN - LOGIN_BUTTON_SIZE;
+            return new Rectangle(buttonX, buttonY, LOGIN_BUTTON_SIZE, LOGIN_BUTTON_SIZE);
+        }
+        
+        // 绘制登录按钮（在底部左侧）
+        private void DrawLoginButton(Graphics g)
+        {
+            if (isCollapsed) return;
+            
+            Rectangle buttonRect = GetLoginButtonRect();
+            SmoothingMode oldSmoothing = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            
+            // 根据登录状态和悬停状态绘制
+            bool isLoggedIn = authAPIClient != null && authAPIClient.IsLoggedIn;
+            
+            if (isLoggedIn)
+            {
+                // 已登录状态：显示用户图标，绿色
+                if (isLoginButtonHovered)
+                {
+                    // 悬停时稍微放大
+                    Rectangle hoverRect = new Rectangle(
+                        buttonRect.X - 1, buttonRect.Y - 1,
+                        buttonRect.Width + 2, buttonRect.Height + 2);
+                    using (SolidBrush brush = new SolidBrush(Color.FromArgb(100, Color.Green)))
+                        g.FillEllipse(brush, hoverRect);
+                }
+                
+                using (SolidBrush brush = new SolidBrush(Color.FromArgb(255, 0, 200, 0)))
+                    g.FillEllipse(brush, buttonRect);
+                
+                // 绘制用户图标（简单的圆形头像）
+                using (Pen pen = new Pen(Color.White, 2f))
+                {
+                    // 绘制圆形头像轮廓
+                    g.DrawEllipse(pen, 
+                        buttonRect.X + 4, buttonRect.Y + 4,
+                        buttonRect.Width - 8, buttonRect.Height - 8);
+                }
+            }
+            else
+            {
+                // 未登录状态：显示登录图标，灰色
+                if (isLoginButtonHovered)
+                {
+                    // 悬停时稍微放大
+                    Rectangle hoverRect = new Rectangle(
+                        buttonRect.X - 1, buttonRect.Y - 1,
+                        buttonRect.Width + 2, buttonRect.Height + 2);
+                    using (SolidBrush brush = new SolidBrush(Color.FromArgb(100, Color.Gray)))
+                        g.FillEllipse(brush, hoverRect);
+                }
+                
+                using (SolidBrush brush = new SolidBrush(Color.FromArgb(255, 150, 150, 150)))
+                    g.FillEllipse(brush, buttonRect);
+                
+                // 绘制登录图标（简单的钥匙或用户图标）
+                using (Pen pen = new Pen(Color.White, 2f))
+                {
+                    // 绘制简单的用户图标
+                    int centerX = buttonRect.X + buttonRect.Width / 2;
+                    int centerY = buttonRect.Y + buttonRect.Height / 2;
+                    // 头部（圆形）
+                    g.DrawEllipse(pen, centerX - 4, centerY - 6, 8, 8);
+                    // 身体（倒三角形）
+                    Point[] body = new Point[]
+                    {
+                        new Point(centerX, centerY + 2),
+                        new Point(centerX - 5, centerY + 8),
+                        new Point(centerX + 5, centerY + 8)
+                    };
+                    g.DrawPolygon(pen, body);
+                }
+            }
+            
+            g.SmoothingMode = oldSmoothing;
+        }
+        
+        // 检查是否点击了登录按钮
+        private bool IsLoginButtonClicked(Point point)
+        {
+            if (isCollapsed) return false;
+            
+            Rectangle buttonRect = GetLoginButtonRect();
+            int centerX = buttonRect.X + LOGIN_BUTTON_SIZE / 2;
+            int centerY = buttonRect.Y + LOGIN_BUTTON_SIZE / 2;
+            int radius = LOGIN_BUTTON_SIZE / 2;
+            
+            int dx = point.X - centerX;
+            int dy = point.Y - centerY;
+            return dx * dx + dy * dy <= radius * radius;
+        }
+        
+        // 处理登录按钮点击
+        private void HandleLoginButtonClick()
+        {
+            if (authAPIClient == null)
+            {
+                authAPIClient = new AuthAPIClient();
+            }
+            
+            if (authAPIClient.IsLoggedIn)
+            {
+                // 已登录，显示用户菜单
+                ShowUserMenu();
+            }
+            else
+            {
+                // 未登录，显示登录对话框
+                ShowLoginDialog();
+            }
+        }
+        
+        // 显示登录对话框
+        private void ShowLoginDialog()
+        {
+            using (var loginDialog = new LoginDialog(authAPIClient))
+            {
+                if (loginDialog.ShowDialog() == DialogResult.OK && loginDialog.LoginSuccess)
+                {
+                    // 登录成功，刷新界面
+                    UpdateLayeredWindowBitmap();
+                    MessageBox.Show($"登录成功！\n\n账号：{loginDialog.LoggedInPhone}", 
+                        "登录成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            }
+        }
+        
+        // 显示用户菜单
+        private void ShowUserMenu()
+        {
+            ContextMenuStrip userMenu = new ContextMenuStrip();
+            
+            // 显示用户信息
+            string phone = authAPIClient.Phone ?? "未知";
+            string expiresText;
+            // 如果是永久会员（plan2），显示"永久会员"，否则显示到期时间
+            if (authAPIClient.SubscriptionType == "plan2")
+            {
+                expiresText = "永久会员";
+            }
+            else
+            {
+                expiresText = authAPIClient.Expires ?? "未设置";
+            }
+            ToolStripMenuItem menuUserInfo = new ToolStripMenuItem($"账号：{phone}\n到期：{expiresText}");
+            menuUserInfo.Enabled = false;
+            userMenu.Items.Add(menuUserInfo);
+            
+            userMenu.Items.Add(new ToolStripSeparator());
+            
+            // 订单管理
+            ToolStripMenuItem menuOrder = new ToolStripMenuItem("订单管理");
+            menuOrder.Click += (s, e) =>
+            {
+                using (var orderForm = new OrderManagementForm(authAPIClient))
+                {
+                    orderForm.ShowDialog();
+                }
+            };
+            userMenu.Items.Add(menuOrder);
+            
+            // 购买套餐
+            ToolStripMenuItem menuPayment = new ToolStripMenuItem("购买套餐");
+            menuPayment.Click += (s, e) =>
+            {
+                using (var purchaseForm = new PurchasePlanForm(authAPIClient))
+                {
+                    purchaseForm.ShowDialog();
+                    UpdateLayeredWindowBitmap(); // 刷新界面
+                }
+            };
+            userMenu.Items.Add(menuPayment);
+            
+            // 应用商城
+            ToolStripMenuItem menuMarketplace = new ToolStripMenuItem("应用商城");
+            menuMarketplace.Click += (s, e) =>
+            {
+                using (var marketplaceForm = new MarketplaceForm(authAPIClient))
+                {
+                    marketplaceForm.ShowDialog();
+                }
+            };
+            userMenu.Items.Add(menuMarketplace);
+            
+            // 设备管理
+            ToolStripMenuItem menuDevice = new ToolStripMenuItem("设备管理");
+            menuDevice.Click += (s, e) =>
+            {
+                using (var deviceForm = new DeviceManagementForm(authAPIClient))
+                {
+                    deviceForm.ShowDialog();
+                }
+            };
+            userMenu.Items.Add(menuDevice);
+            
+            userMenu.Items.Add(new ToolStripSeparator());
+            
+            // 退出登录
+            ToolStripMenuItem menuLogout = new ToolStripMenuItem("退出登录");
+            menuLogout.Click += (s, e) =>
+            {
+                var result = MessageBox.Show("确定要退出登录吗？", "确认", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (result == DialogResult.Yes)
+                {
+                    authAPIClient.Logout();
+                    UpdateLayeredWindowBitmap(); // 刷新界面
+                    MessageBox.Show("已退出登录", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+            };
+            userMenu.Items.Add(menuLogout);
+            
+            // 显示菜单（在登录按钮位置）
+            Rectangle buttonRect = GetLoginButtonRect();
+            Point menuLocation = PointToScreen(new Point(buttonRect.Left, buttonRect.Bottom));
+            userMenu.Show(menuLocation);
         }
         
         // 按钮功能描述字典
@@ -1589,6 +2453,86 @@ namespace Sidebar
         {
             tooltipTimer.Stop();
             
+            // 1. 底部登录/锁定按钮提示
+            if (!isCollapsed && (isLoginButtonHovered || isLockButtonHovered))
+            {
+                try
+                {
+                    HideTooltip();
+                    
+                    string tooltipText;
+                    
+                    if (isLoginButtonHovered)
+                    {
+                        // 登录按钮提示
+                        bool isLoggedIn = authAPIClient != null && authAPIClient.IsLoggedIn;
+                        tooltipText = isLoggedIn ? "已登录账号，点击查看账号和订单" : "登录账号，管理套餐和订单";
+                    }
+                    else
+                    {
+                        // 锁定按钮提示
+                        tooltipText = isAutoHideLocked ? "已锁定侧边栏，始终显示" : "解锁侧边栏，允许自动隐藏";
+                    }
+                    
+                    // 显示底部按钮的工具提示（位置贴近按钮中部）
+                    Rectangle buttonRect = isLoginButtonHovered ? GetLoginButtonRect() : GetLockButtonRect();
+                    Point buttonCenter = new Point(
+                        buttonRect.X + buttonRect.Width / 2,
+                        buttonRect.Y + buttonRect.Height / 2
+                    );
+                    Point screenPos = PointToScreen(buttonCenter);
+                    
+                    tooltipForm = new TooltipForm(tooltipText);
+                    tooltipForm.CreateControl();
+                    Application.DoEvents();
+                    
+                    Rectangle screenBounds = Screen.PrimaryScreen.WorkingArea;
+                    int tooltipWidth = tooltipForm.Width;
+                    int tooltipHeight = tooltipForm.Height;
+                    
+                    Point tooltipLocation;
+                    if (dockSide == DockSide.Right)
+                    {
+                        // 侧边栏在右侧，提示显示在左侧
+                        tooltipLocation = new Point(
+                            screenPos.X - tooltipWidth - 10,
+                            screenPos.Y - tooltipHeight / 2
+                        );
+                    }
+                    else
+                    {
+                        // 侧边栏在左侧，提示显示在右侧
+                        tooltipLocation = new Point(
+                            screenPos.X + 10,
+                            screenPos.Y - tooltipHeight / 2
+                        );
+                    }
+                    
+                    // 限制在屏幕范围内
+                    if (tooltipLocation.X + tooltipWidth > screenBounds.Right)
+                        tooltipLocation.X = screenBounds.Right - tooltipWidth - 10;
+                    if (tooltipLocation.X < screenBounds.Left)
+                        tooltipLocation.X = screenBounds.Left + 10;
+                    if (tooltipLocation.Y + tooltipHeight > screenBounds.Bottom)
+                        tooltipLocation.Y = screenBounds.Bottom - tooltipHeight - 10;
+                    if (tooltipLocation.Y < screenBounds.Top)
+                        tooltipLocation.Y = screenBounds.Top + 10;
+                    
+                    tooltipForm.Location = tooltipLocation;
+                    tooltipForm.Show();
+                    tooltipForm.BringToFront();
+                    tooltipForm.Activate();
+                }
+                catch (Exception ex)
+                {
+                    LogError("显示底部按钮工具提示失败", ex);
+                    SafeDisposeTooltip();
+                }
+                
+                return;
+            }
+            
+            // 2. 普通功能按钮提示
             if (hoveredButton != null && !isCollapsed)
             {
                 ShowTooltip(hoveredButton);
@@ -2760,13 +3704,39 @@ namespace Sidebar
                 // 如果没有自定义路径，尝试自动查找
                 if (string.IsNullOrEmpty(ffmpegPath))
                 {
-                    // 首先尝试使用 FileHelpers.GetAbsolutePath（ShareX 的标准方式）
+                    // 优先查找应用程序目录下的 FFmpeg（集成版本，使用简化的目录名）
+                    string[] appPaths = new string[]
+                    {
+                        Path.Combine(Application.StartupPath, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                        // 兼容旧版本路径
+                        Path.Combine(Application.StartupPath, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                        Path.Combine(Application.StartupPath, "ffmpeg.exe"),
+                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg.exe"),
+                    };
+                    
+                    foreach (string path in appPaths)
+                    {
+                        if (File.Exists(path))
+                        {
+                            ffmpegPath = path;
+                            LogDebug($"在应用程序目录找到 FFmpeg: {ffmpegPath}");
+                            break;
+                        }
+                    }
+                }
+                
+                // 如果还没找到，尝试使用 FileHelpers.GetAbsolutePath（ShareX 的标准方式）
+                if (string.IsNullOrEmpty(ffmpegPath) || !File.Exists(ffmpegPath))
+                {
                     try
                     {
                         string absolutePath = FileHelpers.GetAbsolutePath("ffmpeg.exe");
                         if (File.Exists(absolutePath))
                         {
                             ffmpegPath = absolutePath;
+                            LogDebug($"通过 FileHelpers 找到 FFmpeg: {ffmpegPath}");
                         }
                     }
                     catch (Exception ex)
@@ -2775,12 +3745,11 @@ namespace Sidebar
                     }
                 }
                 
-                // 如果还没找到，尝试在常见位置查找
+                // 如果还没找到，尝试在其他常见位置查找
                 if (string.IsNullOrEmpty(ffmpegPath) || !File.Exists(ffmpegPath))
                 {
                     string[] commonPaths = new string[]
                     {
-                        Path.Combine(Application.StartupPath, "ffmpeg.exe"),
                         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin", "ffmpeg.exe"),
                         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "ffmpeg", "bin", "ffmpeg.exe"),
                     };
@@ -2790,6 +3759,7 @@ namespace Sidebar
                         if (File.Exists(path))
                         {
                             ffmpegPath = path;
+                            LogDebug($"在系统目录找到 FFmpeg: {ffmpegPath}");
                             break;
                         }
                     }
@@ -3019,9 +3989,11 @@ namespace Sidebar
                         DialogResult result = MessageBox.Show(
                             $"无法找到 FFmpeg 可执行文件。\n\n" +
                             $"请确保 FFmpeg 已安装并在以下位置之一：\n" +
+                            $"- {Path.Combine(Application.StartupPath, "ffmpeg-8.0.1", "bin", "ffmpeg.exe")}\n" +
                             $"- {Path.Combine(Application.StartupPath, "ffmpeg.exe")}\n" +
                             $"- 系统 PATH 环境变量中\n\n" +
                             $"当前路径: {finalPath ?? "(空)"}\n\n" +
+                            $"注意：FFmpeg 已集成在应用程序中，正常情况下应自动找到。\n\n" +
                             $"是否要手动选择 FFmpeg 路径？",
                             "FFmpeg 未找到",
                             MessageBoxButtons.YesNo,
@@ -3242,7 +4214,18 @@ namespace Sidebar
         {
             try
             {
-                const string EFFECTS_FOLDER = @"C:\Users\zbfzb\Documents\projects\Sidebar\特效\";
+                // 使用应用程序目录下的特效文件夹（相对路径）
+                string EFFECTS_FOLDER = Path.Combine(Application.StartupPath, "特效");
+                if (!Directory.Exists(EFFECTS_FOLDER))
+                {
+                    // 如果应用程序目录下没有，尝试使用 AppData 目录
+                    EFFECTS_FOLDER = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Sidebar", "特效");
+                    if (!Directory.Exists(EFFECTS_FOLDER))
+                    {
+                        EFFECTS_FOLDER = Path.Combine(Application.StartupPath, "特效");
+                    }
+                }
+                EFFECTS_FOLDER = EFFECTS_FOLDER + Path.DirectorySeparatorChar;
                 
                 // 使用 ShareX 的图片特效功能
                 // 首先让用户选择一张图片
@@ -5729,7 +6712,7 @@ namespace Sidebar
         }
         
         // 显示通知（ShareX 风格，右下角渐变动画）
-        private void ShowNotification(string text, string title = "通知", int duration = 2000, MessageBoxIcon icon = MessageBoxIcon.Information)
+        private void ShowNotification(string text, string title = "通知", int duration = 2000, MessageBoxIcon icon = MessageBoxIcon.Information, string url = null, ToastClickAction clickAction = ToastClickAction.CloseNotification)
         {
             try
             {
@@ -5744,37 +6727,38 @@ namespace Sidebar
                     borderColor = Color.FromArgb(50, 30, 30);
                 }
                 
+                // 如果有URL，点击时打开URL；否则使用指定的点击行为
+                ToastClickAction leftClickAction = !string.IsNullOrEmpty(url) ? ToastClickAction.OpenUrl : clickAction;
+                
                 // 创建通知配置
                 NotificationFormConfig config = new NotificationFormConfig
                 {
                     Duration = duration, // 显示持续时间（毫秒）
                     FadeDuration = 500, // 渐变动画持续时间（毫秒）
                     Placement = ContentAlignment.BottomRight, // 右下角位置
-                    Offset = 10, // 距离边缘的偏移量
+                    Offset = 80, // 距离屏幕右侧80像素，避免和侧边栏重叠
                     Size = new Size(300, 80), // 通知窗口大小
                     Title = title,
                     Text = text,
                     BackgroundColor = backgroundColor,
                     BorderColor = borderColor,
                     TextColor = Color.FromArgb(210, 210, 210), // 文本颜色
-                    TitleColor = Color.FromArgb(240, 240, 240) // 标题颜色
+                    TitleColor = Color.FromArgb(240, 240, 240), // 标题颜色
+                    URL = url, // 设置URL（如果提供）
+                    LeftClickAction = leftClickAction // 设置点击行为
                 };
                 
-                // 显示通知（在主线程中）
+                // 显示通知（在主线程中，使用 ShareX 风格）
                 if (this.InvokeRequired)
                 {
                     this.Invoke((System.Windows.Forms.MethodInvoker)delegate
                     {
                         NotificationForm.Show(config);
-                        // 向左移动5像素（通过反射获取实例并调整位置）
-                        AdjustNotificationPosition(-5, 0);
                     });
                 }
                 else
                 {
                     NotificationForm.Show(config);
-                    // 向左移动5像素
-                    AdjustNotificationPosition(-5, 0);
                 }
             }
             catch
@@ -5906,7 +6890,13 @@ namespace Sidebar
                 if (string.IsNullOrEmpty(ffmpegOptions.CLIPath) || !System.IO.File.Exists(ffmpegOptions.CLIPath))
                 {
                     string appDir = AppDomain.CurrentDomain.BaseDirectory;
-                    string defaultFFmpegPath = Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe");
+                    // 使用简化的目录名，同时兼容旧版本路径
+                    string defaultFFmpegPath = Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe");
+                    if (!File.Exists(defaultFFmpegPath))
+                    {
+                        // 兼容旧版本路径
+                        defaultFFmpegPath = Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe");
+                    }
                     if (System.IO.File.Exists(defaultFFmpegPath))
                     {
                         ffmpegOptions.OverrideCLIPath = true;
@@ -6379,13 +7369,22 @@ namespace Sidebar
                 // 清理工具提示
                 SafeDisposeTooltip();
                 
+                // 清理图标缓存
+                if (iconCache != null)
+                {
+                    foreach (var icon in iconCache.Values)
+                    {
+                        icon?.Dispose();
+                    }
+                    iconCache.Clear();
+                    iconCache = null;
+                }
+                
                 // 清理定时器（先停止再释放）
                 tooltipTimer?.Stop();
                 tooltipTimer?.Dispose();
                 animationTimer?.Stop();
                 animationTimer?.Dispose();
-                iconScaleTimer?.Stop();
-                iconScaleTimer?.Dispose();
                 autoHideTimer?.Stop();
                 autoHideTimer?.Dispose();
                 collapseAnimationTimer?.Stop();
@@ -6514,6 +7513,12 @@ namespace Sidebar
                 e.Graphics.DrawRectangle(borderPen, 0, 0, Width - 1, Height - 1);
             }
         }
+    }
+    
+    // 侧边栏配置数据结构（目前仅保存 DockSide）
+    public class SidebarConfig
+    {
+        public string DockSide { get; set; }
     }
     
     // 自定义 TypeDescriptionProvider 用于翻译属性名称
