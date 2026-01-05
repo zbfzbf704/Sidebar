@@ -1,0 +1,52 @@
+Sidebar 开源代码上传指南
+========================
+
+本目录包含 Sidebar 项目的完整源代码，符合 GPL v3 开源协议要求。
+
+上传步骤：
+----------
+
+方法一：GitHub 网页上传（最简单）
+1. 访问 https://github.com/new
+2. 填写仓库信息：
+   - Repository name: Sidebar
+   - Description: 基于 ShareX 开发的 Windows 侧边栏应用程序
+   - 选择 Public（公开）
+   - 不要勾选任何初始化选项
+3. 点击 Create repository
+4. 在仓库页面点击 "uploading an existing file"
+5. 将本目录的所有文件拖拽上传
+6. 填写提交信息：Initial commit: Sidebar open source release
+7. 点击 Commit changes
+
+方法二：使用 Git 命令行
+1. 安装 Git: https://git-scm.com/download/win
+2. 打开命令行，进入本目录
+3. 执行以下命令：
+   git init
+   git add .
+   git commit -m "Initial commit: Sidebar open source release"
+   git remote add origin https://github.com/您的用户名/Sidebar.git
+   git branch -M main
+   git push -u origin main
+
+方法三：使用 GitHub Desktop
+1. 下载 GitHub Desktop: https://desktop.github.com/
+2. 登录账户
+3. File -> New Repository
+4. 填写信息并创建
+5. 将本目录文件拖入
+6. 提交并发布
+
+重要提示：
+----------
+- 必须公开源代码（GPL v3 要求）
+- 必须包含 LICENSE 文件
+- 必须保留所有版权声明
+- 必须说明基于 ShareX 开发
+
+联系方式：
+----------
+作者：蝴蝶哥
+邮箱：your-email@example.com
+
