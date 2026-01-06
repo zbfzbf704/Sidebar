@@ -2,7 +2,7 @@
 
 /*
     Copyright (c) 2025 蝴蝶哥
-    Email: 1780555120@qq.com
+    Email: your-email@example.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -54,7 +54,20 @@ namespace Sidebar
         [DllImport("user32.dll", SetLastError = true)]
         private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr WindowFromPoint(POINT Point);
+
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+
         private const int ULW_ALPHA = 0x00000002;
+        private const uint WM_ACTIVATE = 0x0006;
+        private const uint WA_INACTIVE = 0;
+        private const int VK_LBUTTON = 0x01;
+        private const int VK_RBUTTON = 0x02;
         private const byte AC_SRC_OVER = 0x00;
         private const byte AC_SRC_ALPHA = 0x01;
 
@@ -98,18 +111,18 @@ namespace Sidebar
         // 常量
         private const int INITIAL_WIDTH = 460;
         private const int INITIAL_HEIGHT = 280;
+        private const int MAX_HEIGHT = 600; // 最大高度，超过后显示滚动条
         private const int CORNER_RADIUS = 16;
         private const int SHADOW_SIZE = 8;
         private const int ICON_SIZE = 48;
         private const int PADDING = 20;
-        private const int ICONS_PER_ROW = 7; // 每行图标数量
+        private const int CATEGORY_ICON_GAP = 15; // 分类栏和图标区域之间的间距
         private const int TEXT_HEIGHT = 42; // 文本区域高度（支持双排，增加高度以更好显示中文）
         private const int TEXT_WIDTH = 70; // 文本区域宽度（超出图标宽度，参考 Windows 显示更多文字）
-        // 计算图标间距：确保文字区域不重叠
-        // 文字区域超出图标：(TEXT_WIDTH - ICON_SIZE) / 2 = 11 像素
-        // 两个文字区域之间需要至少 2 像素间距，所以：
-        // ICON_SPACING = (TEXT_WIDTH - ICON_SIZE) + 2 = 24 像素
-        private const int ICON_SPACING = 24; // 图标间距（根据文字宽度计算，确保文字不重叠）
+        // 增大图标间距：图标之间、图标和分类之间都有足够间隔
+        private const int ICON_HORIZONTAL_SPACING = 30; // 图标水平间距（图标之间）
+        private const int ICON_VERTICAL_SPACING = 15; // 图标垂直间距（图标和文本之间）
+        private const int ROW_SPACING = 20; // 行间距（图标行之间的间距）
 
         // 数据
         private Dictionary<string, List<DesktopItem>> categories = new Dictionary<string, List<DesktopItem>>(); // 分类数据
@@ -126,6 +139,7 @@ namespace Sidebar
         private Dictionary<DesktopItem, float> itemScales = new Dictionary<DesktopItem, float>(); // 图标缩放值
         private Timer animationTimer; // 动画定时器
         private Timer autoCloseTimer; // 自动关闭定时器（鼠标离开窗口后5秒关闭，操作中延长至10秒）
+        private Timer dragDetectionTimer; // 拖拽检测定时器（用于延迟关闭窗口，检测是否真的在拖拽）
         private bool isSidebarLeft = false; // 侧边栏是否在左侧
         private bool isMouseInside = false; // 鼠标是否在窗口内（初始为false，因为窗口刚显示时鼠标可能不在窗口内）
         private bool isOperationInProgress = false; // 是否有正在进行的操作（拖拽、添加分类、重命名、删除等）
@@ -134,6 +148,9 @@ namespace Sidebar
         private int currentRowCount = 0;
         private int currentColCount = 0;
         private const int CATEGORY_BAR_WIDTH = 60; // 分类栏宽度（竖排）
+        private int scrollOffsetY = 0; // 垂直滚动偏移量
+        private int maxScrollOffset = 0; // 最大滚动偏移量
+        private Point lastMousePos; // 上次鼠标位置（用于滚动）
 
         public DesktopForm()
         {
@@ -161,6 +178,11 @@ namespace Sidebar
             autoCloseTimer = new Timer();
             autoCloseTimer.Interval = 5000; // 5秒
             autoCloseTimer.Tick += AutoCloseTimer_Tick;
+            
+            // 初始化拖拽检测定时器（用于延迟关闭窗口，检测是否真的在拖拽）
+            dragDetectionTimer = new Timer();
+            dragDetectionTimer.Interval = 100; // 100ms周期性检查
+            dragDetectionTimer.Tick += DragDetectionTimer_Tick;
             
             // 初始化分类
             if (!categories.ContainsKey(DEFAULT_CATEGORY))
@@ -190,6 +212,43 @@ namespace Sidebar
             // 只有在鼠标不在窗口内且没有操作进行时才关闭
             StopAutoCloseTimer();
             this.Hide();
+        }
+        
+        /// <summary>
+        /// 拖拽检测定时器事件：周期性检查，延迟关闭窗口，检测是否真的在拖拽
+        /// </summary>
+        private void DragDetectionTimer_Tick(object sender, EventArgs e)
+        {
+            // 如果已经有操作进行中（比如已经触发了DragEnter），停止定时器，不关闭窗口
+            if (isOperationInProgress)
+            {
+                dragDetectionTimer?.Stop();
+                return;
+            }
+            
+            // 检查鼠标是否进入窗口区域
+            Point mousePos = Control.MousePosition;
+            Rectangle windowRect = new Rectangle(this.Location, this.Size);
+            
+            if (windowRect.Contains(mousePos))
+            {
+                // 鼠标进入窗口区域，可能是拖拽操作，停止定时器，不关闭窗口
+                dragDetectionTimer?.Stop();
+                return;
+            }
+            
+            // 检查鼠标按键是否仍然被按下
+            bool mouseButtonPressed = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 || 
+                                     (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+            
+            if (!mouseButtonPressed)
+            {
+                // 鼠标按键已释放，且没有操作进行中，说明不是拖拽，关闭窗口
+                dragDetectionTimer?.Stop();
+                StopAutoCloseTimer();
+                this.Hide();
+            }
+            // 如果鼠标按键仍然被按下，继续等待（定时器会继续触发）
         }
         
         /// <summary>
@@ -244,6 +303,14 @@ namespace Sidebar
             {
                 StopAutoCloseTimer();
             }
+        }
+        
+        /// <summary>
+        /// 检查自动关闭定时器是否正在运行
+        /// </summary>
+        private bool IsAutoCloseTimerRunning()
+        {
+            return autoCloseTimer != null && autoCloseTimer.Enabled;
         }
         
         private void AnimationTimer_Tick(object sender, EventArgs e)
@@ -327,13 +394,16 @@ namespace Sidebar
 
             // 事件
             this.DragEnter += DesktopForm_DragEnter;
+            this.DragOver += DesktopForm_DragOver;
             this.DragDrop += DesktopForm_DragDrop;
+            this.DragLeave += DesktopForm_DragLeave;
             this.Paint += DesktopForm_Paint;
             this.MouseClick += DesktopForm_MouseClick;
             this.MouseMove += DesktopForm_MouseMove;
             this.MouseDown += DesktopForm_MouseDown;
             this.MouseEnter += DesktopForm_MouseEnter;
             this.MouseLeave += DesktopForm_MouseLeave;
+            this.MouseWheel += DesktopForm_MouseWheel;
         }
         
         /// <summary>
@@ -401,6 +471,9 @@ namespace Sidebar
 
         private void DesktopForm_DragEnter(object sender, DragEventArgs e)
         {
+            // 停止拖拽检测定时器（如果正在运行），因为已经确认是拖拽操作
+            dragDetectionTimer?.Stop();
+            
             // 开始拖拽操作
             StartOperation();
             
@@ -414,11 +487,32 @@ namespace Sidebar
             }
         }
 
+        /// <summary>
+        /// 拖拽悬停事件：持续检测拖拽操作，确保窗口不关闭
+        /// </summary>
+        private void DesktopForm_DragOver(object sender, DragEventArgs e)
+        {
+            // 拖拽操作进行中，停止拖拽检测定时器（如果正在运行）
+            dragDetectionTimer?.Stop();
+            
+            // 确保操作状态已设置（作为双重保险）
+            if (!isOperationInProgress)
+            {
+            StartOperation();
+            }
+            
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                e.Effect = DragDropEffects.Copy;
+            }
+            else
+            {
+                e.Effect = DragDropEffects.None;
+            }
+        }
+
         private void DesktopForm_DragDrop(object sender, DragEventArgs e)
         {
-            // 拖拽操作进行中，确保不关闭窗口
-            StartOperation();
-            
             if (e.Data.GetDataPresent(DataFormats.FileDrop))
             {
                 string[] files = (string[])e.Data.GetData(DataFormats.FileDrop);
@@ -452,6 +546,15 @@ namespace Sidebar
             }
             
             // 拖拽操作结束
+            EndOperation();
+        }
+        
+        /// <summary>
+        /// 拖拽离开窗口事件
+        /// </summary>
+        private void DesktopForm_DragLeave(object sender, EventArgs e)
+        {
+            // 拖拽离开窗口，结束操作
             EndOperation();
         }
         
@@ -512,6 +615,34 @@ namespace Sidebar
             {
                 ShowNotification($"复制文件失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
                 return null;
+            }
+        }
+        
+        /// <summary>
+        /// 计算文件夹内的文件数量（递归）
+        /// </summary>
+        private int CountFilesInDirectory(string directory)
+        {
+            if (!Directory.Exists(directory))
+                return 0;
+            
+            try
+            {
+                int count = 0;
+                // 计算当前目录下的文件数
+                count += Directory.GetFiles(directory).Length;
+                
+                // 递归计算子目录下的文件数
+                foreach (string subDir in Directory.GetDirectories(directory))
+                {
+                    count += CountFilesInDirectory(subDir);
+                }
+                
+                return count;
+            }
+            catch
+            {
+                return 0;
             }
         }
         
@@ -654,6 +785,9 @@ namespace Sidebar
                             FileName = pathToOpen,
                             UseShellExecute = true
                         });
+                        // 启动程序后立即关闭窗口
+                        this.Hide();
+                        StopAutoCloseTimer();
                     }
                     catch (Exception ex)
                     {
@@ -678,6 +812,19 @@ namespace Sidebar
             menu.Items.Add(copyItem);
             
             menu.Items.Add(new ToolStripSeparator());
+            
+            // 如果是文件夹，添加备份选项
+            if (selectedItem != null)
+            {
+                string itemPath = selectedItem.IsRealFile ? selectedItem.FilePath : (selectedItem.OriginalPath ?? selectedItem.FilePath);
+                if (Directory.Exists(itemPath))
+                {
+                    ToolStripMenuItem backupItem = new ToolStripMenuItem("备份为ZIP");
+                    backupItem.Click += (s, e) => BackupFolder(itemPath);
+                    menu.Items.Add(backupItem);
+                    menu.Items.Add(new ToolStripSeparator());
+                }
+            }
             
             // 打开文件所在位置
             ToolStripMenuItem openLocationItem = new ToolStripMenuItem("打开文件所在位置");
@@ -869,6 +1016,208 @@ namespace Sidebar
             catch (Exception ex)
             {
                 ShowNotification($"备份失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
+            }
+        }
+        
+        /// <summary>
+        /// 备份文件夹为ZIP文件
+        /// </summary>
+        private void BackupFolder(string folderPath)
+        {
+            if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
+            {
+                ShowNotification("文件夹不存在或路径无效", "错误", 3000, MessageBoxIcon.Error);
+                return;
+            }
+            
+            try
+            {
+                string folderName = Path.GetFileName(folderPath);
+                if (string.IsNullOrEmpty(folderName))
+                {
+                    folderName = "文件夹";
+                }
+                
+                SaveFileDialog saveDialog = new SaveFileDialog
+                {
+                    Filter = "ZIP 文件 (*.zip)|*.zip",
+                    FileName = $"{folderName}_{DateTime.Now:yyyyMMdd_HHmmss}.zip",
+                    Title = "选择备份文件保存位置"
+                };
+                
+                if (saveDialog.ShowDialog() == DialogResult.OK)
+                {
+                    string zipPath = saveDialog.FileName;
+                    
+                    // 创建进度窗口
+                    ProgressForm progressForm = new ProgressForm("正在备份文件夹...");
+                    progressForm.Show();
+                    Application.DoEvents();
+                    
+                    // 使用Task异步执行备份
+                    Task.Run(() =>
+                    {
+                        try
+                        {
+                            // 计算总文件数
+                            progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                            {
+                                progressForm.SetProgress(0, 100, "正在计算文件数量...");
+                            }));
+                            
+                            int totalFiles = CountFilesInDirectory(folderPath);
+                            
+                            if (totalFiles == 0)
+                            {
+                                progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                                {
+                                    progressForm.Close();
+                                    ShowNotification("文件夹为空，无法备份", "提示", 3000, MessageBoxIcon.Information);
+                                }));
+                                return;
+                            }
+                            
+                            // 创建临时目录
+                            string tempDir = Path.Combine(Path.GetTempPath(), $"FolderBackup_{Guid.NewGuid()}");
+                            Directory.CreateDirectory(tempDir);
+                            
+                            try
+                            {
+                                // 复制文件夹到临时目录
+                                string tempFolderPath = Path.Combine(tempDir, folderName);
+                                
+                                progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                                {
+                                    progressForm.SetProgress(0, totalFiles + 2, "正在复制文件...");
+                                }));
+                                
+                                // 递归复制文件并更新进度
+                                int currentFile = CopyDirectoryWithProgress(folderPath, tempFolderPath, progressForm, 0, totalFiles);
+                                
+                                progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                                {
+                                    progressForm.SetProgress(totalFiles + 1, totalFiles + 2, "正在创建压缩包...");
+                                }));
+                                
+                                // 创建ZIP文件
+                                if (File.Exists(zipPath))
+                                {
+                                    File.Delete(zipPath);
+                                }
+                                
+                                ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, false);
+                                
+                                progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                                {
+                                    progressForm.SetProgress(totalFiles + 2, totalFiles + 2, "备份完成");
+                                }));
+                                
+                                // 清理临时目录
+                                if (Directory.Exists(tempDir))
+                                {
+                                    try
+                                    {
+                                        Directory.Delete(tempDir, true);
+                                    }
+                                    catch { }
+                                }
+                                
+                                // 关闭进度窗口并显示成功消息
+                                progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                                {
+                                    progressForm.Close();
+                                    ShowNotification(
+                                        $"备份成功！\n\n备份文件：{zipPath}\n\n包含 {totalFiles} 个文件。",
+                                        "备份完成",
+                                        4000,
+                                        MessageBoxIcon.Information
+                                    );
+                                }));
+                            }
+                            catch (Exception ex)
+                            {
+                                // 清理临时目录
+                                if (Directory.Exists(tempDir))
+                                {
+                                    try
+                                    {
+                                        Directory.Delete(tempDir, true);
+                                    }
+                                    catch { }
+                                }
+                                
+                                progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                                {
+                                    progressForm.Close();
+                                    ShowNotification($"备份失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
+                                }));
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                            {
+                                progressForm.Close();
+                                ShowNotification($"备份失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
+                            }));
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                ShowNotification($"备份失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
+            }
+        }
+        
+        /// <summary>
+        /// 递归复制目录并更新进度
+        /// </summary>
+        private int CopyDirectoryWithProgress(string sourceDir, string destDir, ProgressForm progressForm, int currentFile, int totalFiles)
+        {
+            if (string.IsNullOrEmpty(sourceDir) || string.IsNullOrEmpty(destDir))
+                return currentFile;
+                
+            if (!Directory.Exists(sourceDir))
+                return currentFile;
+            
+            try
+            {
+                Directory.CreateDirectory(destDir);
+                
+                // 复制文件
+                string[] files = Directory.GetFiles(sourceDir);
+                foreach (string file in files)
+                {
+                    string fileName = Path.GetFileName(file);
+                    string destFile = Path.Combine(destDir, fileName);
+                    File.Copy(file, destFile, true);
+                    
+                    currentFile++;
+                    if (progressForm != null && !progressForm.IsDisposed)
+                    {
+                        progressForm.Invoke((System.Windows.Forms.MethodInvoker)(() =>
+                        {
+                            progressForm.SetProgress(currentFile, totalFiles + 2, $"正在复制：{fileName}");
+                        }));
+                    }
+                }
+                
+                // 递归复制子目录
+                string[] dirs = Directory.GetDirectories(sourceDir);
+                foreach (string dir in dirs)
+                {
+                    string dirName = Path.GetFileName(dir);
+                    string destSubDir = Path.Combine(destDir, dirName);
+                    currentFile = CopyDirectoryWithProgress(dir, destSubDir, progressForm, currentFile, totalFiles);
+                }
+                
+                return currentFile;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"复制目录失败: {sourceDir} -> {destDir}, 错误: {ex.Message}");
+                throw;
             }
         }
         
@@ -1513,6 +1862,35 @@ namespace Sidebar
                 hoveredItem = item;
                 // 动画定时器会自动更新显示
             }
+            
+            lastMousePos = e.Location;
+        }
+        
+        /// <summary>
+        /// 鼠标滚轮事件：实现滚动功能
+        /// </summary>
+        private void DesktopForm_MouseWheel(object sender, MouseEventArgs e)
+        {
+            if (maxScrollOffset <= 0) return; // 不需要滚动
+            
+            int delta = e.Delta;
+            int scrollStep = 30; // 每次滚动的像素数
+            
+            if (delta > 0)
+            {
+                // 向上滚动
+                scrollOffsetY = Math.Max(0, scrollOffsetY - scrollStep);
+            }
+            else
+            {
+                // 向下滚动
+                scrollOffsetY = Math.Min(maxScrollOffset, scrollOffsetY + scrollStep);
+            }
+            
+            if (IsHandleCreated)
+            {
+                UpdateLayeredWindowBitmap();
+            }
         }
         
         private string GetHoveredCategory(Point point)
@@ -1566,23 +1944,31 @@ namespace Sidebar
             int x, y;
             if (isSidebarLeft)
             {
-                // 侧边栏在左侧，分类栏在左侧，图标区域从右侧开始
-                x = PADDING + SHADOW_SIZE + CATEGORY_BAR_WIDTH;
+                // 侧边栏在左侧，分类栏在左侧，图标区域从右侧开始（增加间距）
+                x = PADDING + SHADOW_SIZE + CATEGORY_BAR_WIDTH + CATEGORY_ICON_GAP;
             }
             else
             {
                 // 侧边栏在右侧，分类栏在右侧，图标区域从左侧开始
                 x = PADDING + SHADOW_SIZE;
             }
-            y = PADDING + SHADOW_SIZE;
+            y = PADDING + SHADOW_SIZE - scrollOffsetY; // 应用滚动偏移
 
-            foreach (var item in items)
+            // 计算每行图标数量（与 UpdateWindowSize 和 DrawIcons 中的计算保持一致）
+            int iconAreaAvailableWidth = Width - CATEGORY_BAR_WIDTH - CATEGORY_ICON_GAP - (PADDING + SHADOW_SIZE) * 2;
+            int iconsPerRow = Math.Max(1, (iconAreaAvailableWidth + ICON_HORIZONTAL_SPACING) / (ICON_SIZE + ICON_HORIZONTAL_SPACING));
+            
+            // 计算每行高度
+            int rowHeight = ICON_SIZE + TEXT_HEIGHT + ICON_VERTICAL_SPACING;
+
+            for (int i = 0; i < items.Count; i++)
             {
-                int col = items.IndexOf(item) % ICONS_PER_ROW;
-                int row = items.IndexOf(item) / ICONS_PER_ROW;
+                var item = items[i];
+                int col = i % iconsPerRow;
+                int row = i / iconsPerRow;
 
-                int itemX = x + col * (ICON_SIZE + ICON_SPACING);
-                int itemY = y + row * (ICON_SIZE + ICON_SPACING + TEXT_HEIGHT);
+                int itemX = x + col * (ICON_SIZE + ICON_HORIZONTAL_SPACING);
+                int itemY = y + row * (rowHeight + ROW_SPACING);
 
                 Rectangle itemRect = new Rectangle(itemX, itemY, ICON_SIZE, ICON_SIZE + TEXT_HEIGHT);
 
@@ -2277,8 +2663,8 @@ namespace Sidebar
 
         private void UpdateWindowSize()
         {
-            // 宽度固定，包含分类栏
-            int fixedWidth = INITIAL_WIDTH + CATEGORY_BAR_WIDTH;
+            // 宽度固定，包含分类栏和间距
+            int fixedWidth = INITIAL_WIDTH + CATEGORY_BAR_WIDTH + CATEGORY_ICON_GAP;
             
             // 计算分类栏所需高度（分类按钮 + 添加按钮）
             int buttonSpacing = 5;
@@ -2291,29 +2677,55 @@ namespace Sidebar
             int categoryBarHeight = categoryBarPadding * 2 + categoryCount * (buttonHeight + buttonSpacing) + addBtnHeight;
             categoryBarHeight = Math.Max(categoryBarHeight, categoryBarMinHeight);
             
+            // 计算图标区域可用宽度（窗口宽度 - 分类栏 - 间距 - 边距）
+            int iconAreaAvailableWidth = fixedWidth - CATEGORY_BAR_WIDTH - CATEGORY_ICON_GAP - (PADDING + SHADOW_SIZE) * 2;
+            
+            // 根据可用宽度计算每行图标数量（自适应）
+            // 每个图标需要：ICON_SIZE + ICON_HORIZONTAL_SPACING
+            int iconsPerRow = Math.Max(1, (iconAreaAvailableWidth + ICON_HORIZONTAL_SPACING) / (ICON_SIZE + ICON_HORIZONTAL_SPACING));
+            currentColCount = iconsPerRow;
+            
             // 计算图标区域所需高度
             int iconAreaHeight = INITIAL_HEIGHT - (PADDING + SHADOW_SIZE) * 2; // 初始图标区域高度
             
             if (items.Count > 0)
             {
-                int rowCount = (int)Math.Ceiling((double)items.Count / ICONS_PER_ROW);
-                iconAreaHeight = rowCount * (ICON_SIZE + TEXT_HEIGHT) + (rowCount - 1) * ICON_SPACING;
+                int rowCount = (int)Math.Ceiling((double)items.Count / iconsPerRow);
+                // 每行高度 = 图标高度 + 文本高度 + 垂直间距
+                int rowHeight = ICON_SIZE + TEXT_HEIGHT + ICON_VERTICAL_SPACING;
+                iconAreaHeight = rowCount * rowHeight + (rowCount - 1) * ROW_SPACING;
                 currentRowCount = rowCount;
-                currentColCount = Math.Min(items.Count, ICONS_PER_ROW);
             }
             else
             {
                 currentRowCount = 0;
-                currentColCount = 0;
             }
             
-            // 总高度 = 分类栏高度和图标区域高度的较大值 + 上下边距和阴影
-            int totalHeight = Math.Max(categoryBarHeight, iconAreaHeight) + (PADDING + SHADOW_SIZE) * 2;
+            // 计算实际需要的总高度（分类栏高度和图标区域高度的较大值 + 上下边距和阴影）
+            int requiredHeight = Math.Max(categoryBarHeight, iconAreaHeight) + (PADDING + SHADOW_SIZE) * 2;
+            
+            // 如果超过最大高度，使用最大高度并启用滚动
+            int displayHeight = requiredHeight;
+            if (requiredHeight > MAX_HEIGHT)
+            {
+                displayHeight = MAX_HEIGHT;
+                maxScrollOffset = requiredHeight - MAX_HEIGHT + (PADDING + SHADOW_SIZE) * 2;
+                // 确保滚动偏移量在有效范围内
+                if (scrollOffsetY > maxScrollOffset)
+                {
+                    scrollOffsetY = maxScrollOffset;
+                }
+            }
+            else
+            {
+                maxScrollOffset = 0;
+                scrollOffsetY = 0;
+            }
             
             // 最小高度
-            totalHeight = Math.Max(totalHeight, INITIAL_HEIGHT);
+            displayHeight = Math.Max(displayHeight, INITIAL_HEIGHT);
 
-            this.Size = new Size(fixedWidth, totalHeight);
+            this.Size = new Size(fixedWidth, displayHeight);
         }
 
         protected override void OnPaintBackground(PaintEventArgs e)
@@ -2370,6 +2782,12 @@ namespace Sidebar
                     
                     // 绘制图标
                     DrawIcons(g);
+                    
+                    // 绘制滚动条（如果需要滚动）
+                    if (maxScrollOffset > 0)
+                    {
+                        DrawScrollBar(g);
+                    }
 
                     path.Dispose();
                 }
@@ -2570,25 +2988,40 @@ namespace Sidebar
             int x, y;
             if (isSidebarLeft)
             {
-                // 侧边栏在左侧，分类栏在左侧，图标区域从右侧开始
-                x = PADDING + SHADOW_SIZE + CATEGORY_BAR_WIDTH;
+                // 侧边栏在左侧，分类栏在左侧，图标区域从右侧开始（增加间距）
+                x = PADDING + SHADOW_SIZE + CATEGORY_BAR_WIDTH + CATEGORY_ICON_GAP;
             }
             else
             {
                 // 侧边栏在右侧，分类栏在右侧，图标区域从左侧开始
                 x = PADDING + SHADOW_SIZE;
             }
-            y = PADDING + SHADOW_SIZE;
+            y = PADDING + SHADOW_SIZE - scrollOffsetY; // 应用滚动偏移
+
+            // 计算每行图标数量（与 UpdateWindowSize 中的计算保持一致）
+            int iconAreaAvailableWidth = Width - CATEGORY_BAR_WIDTH - CATEGORY_ICON_GAP - (PADDING + SHADOW_SIZE) * 2;
+            int iconsPerRow = Math.Max(1, (iconAreaAvailableWidth + ICON_HORIZONTAL_SPACING) / (ICON_SIZE + ICON_HORIZONTAL_SPACING));
+            
+            // 计算每行高度
+            int rowHeight = ICON_SIZE + TEXT_HEIGHT + ICON_VERTICAL_SPACING;
 
             for (int i = 0; i < items.Count; i++)
             {
                 var item = items[i];
-                int col = i % ICONS_PER_ROW;
-                int row = i / ICONS_PER_ROW;
+                int col = i % iconsPerRow;
+                int row = i / iconsPerRow;
 
-                int itemX = x + col * (ICON_SIZE + ICON_SPACING);
-                int itemY = y + row * (ICON_SIZE + ICON_SPACING + TEXT_HEIGHT);
+                int itemX = x + col * (ICON_SIZE + ICON_HORIZONTAL_SPACING);
+                int itemY = y + row * (rowHeight + ROW_SPACING);
 
+                // 检查图标是否在可见区域内（考虑滚动）
+                int visibleTop = PADDING + SHADOW_SIZE;
+                int visibleBottom = Height - (PADDING + SHADOW_SIZE);
+                int itemBottom = itemY + ICON_SIZE + TEXT_HEIGHT;
+
+                // 只绘制可见的图标（优化性能）
+                if (itemBottom >= visibleTop && itemY <= visibleBottom)
+                {
                 // 获取图标的缩放值
                 float scale = itemScales.ContainsKey(item) ? itemScales[item] : 1.0f;
                 
@@ -2603,6 +3036,7 @@ namespace Sidebar
 
                 // 绘制文件名（支持双排显示）
                 DrawItemText(g, item, itemX, itemY);
+                }
             }
         }
 
@@ -2920,6 +3354,73 @@ namespace Sidebar
         }
         
         /// <summary>
+        /// 绘制滚动条
+        /// </summary>
+        private void DrawScrollBar(Graphics g)
+        {
+            const int SCROLLBAR_WIDTH = 8; // 滚动条宽度
+            const int SCROLLBAR_MARGIN = 4; // 滚动条边距
+            const int MIN_THUMB_HEIGHT = 20; // 滑块最小高度
+            
+            // 计算滚动条位置（在窗口右侧，与分类栏相对）
+            int scrollbarX, scrollbarY, scrollbarHeight;
+            
+            if (isSidebarLeft)
+            {
+                // 侧边栏在左侧，滚动条在右侧
+                scrollbarX = Width - (PADDING + SHADOW_SIZE) - SCROLLBAR_WIDTH - SCROLLBAR_MARGIN;
+            }
+            else
+            {
+                // 侧边栏在右侧，滚动条也在右侧（在分类栏左侧）
+                scrollbarX = Width - (PADDING + SHADOW_SIZE) - CATEGORY_BAR_WIDTH - CATEGORY_ICON_GAP - SCROLLBAR_WIDTH - SCROLLBAR_MARGIN;
+            }
+            
+            scrollbarY = PADDING + SHADOW_SIZE;
+            scrollbarHeight = Height - (PADDING + SHADOW_SIZE) * 2;
+            
+            // 计算滚动条轨道区域
+            Rectangle trackRect = new Rectangle(scrollbarX, scrollbarY, SCROLLBAR_WIDTH, scrollbarHeight);
+            
+            // 绘制滚动条轨道（半透明背景）
+            using (SolidBrush trackBrush = new SolidBrush(Color.FromArgb(30, 255, 255, 255)))
+            {
+                g.FillRectangle(trackBrush, trackRect);
+            }
+            
+            // 计算滑块位置和大小
+            int totalContentHeight = scrollbarHeight + maxScrollOffset; // 总内容高度
+            int thumbHeight = Math.Max(MIN_THUMB_HEIGHT, (int)((double)scrollbarHeight * scrollbarHeight / totalContentHeight));
+            
+            // 计算滑块位置（根据当前滚动偏移量）
+            int thumbY;
+            if (maxScrollOffset > 0)
+            {
+                thumbY = scrollbarY + (int)((double)scrollOffsetY / maxScrollOffset * (scrollbarHeight - thumbHeight));
+            }
+            else
+            {
+                thumbY = scrollbarY;
+            }
+            
+            // 确保滑块在轨道内
+            thumbY = Math.Max(scrollbarY, Math.Min(thumbY, scrollbarY + scrollbarHeight - thumbHeight));
+            
+            // 绘制滑块
+            Rectangle thumbRect = new Rectangle(scrollbarX, thumbY, SCROLLBAR_WIDTH, thumbHeight);
+            using (SolidBrush thumbBrush = new SolidBrush(Color.FromArgb(120, 255, 255, 255)))
+            {
+                g.FillRectangle(thumbBrush, thumbRect);
+            }
+            
+            // 绘制滑块边框
+            using (Pen thumbPen = new Pen(Color.FromArgb(180, 255, 255, 255), 1))
+            {
+                g.DrawRectangle(thumbPen, thumbRect);
+            }
+        }
+        
+        /// <summary>
         /// 判断字符是否为中文字符
         /// </summary>
         private bool IsChinese(char c)
@@ -3122,6 +3623,55 @@ namespace Sidebar
                 StopAutoCloseTimer();
                 isMouseInside = false;
             }
+        }
+        
+        /// <summary>
+        /// 处理窗口消息，用于检测窗口失去激活状态（点击桌面或其他窗口时立即关闭）
+        /// </summary>
+        protected override void WndProc(ref Message m)
+        {
+            // 处理 WM_ACTIVATE 消息
+            if (m.Msg == WM_ACTIVATE)
+            {
+                // LOWORD(wParam) 表示激活状态：WA_INACTIVE (0) 表示窗口失去激活状态
+                uint wParam = (uint)m.WParam.ToInt64();
+                uint activateState = wParam & 0xFFFF;
+                
+                if (activateState == WA_INACTIVE)
+                {
+                    // 窗口失去激活状态（用户点击了其他地方，如桌面或其他窗口）
+                    // 停止拖拽检测定时器（如果正在运行）
+                    dragDetectionTimer?.Stop();
+                    
+                    // 如果已经有操作进行中（比如已经在拖拽），不关闭窗口
+                    if (isOperationInProgress)
+                    {
+                        return; // 不关闭窗口
+                    }
+                    
+                    // 检查鼠标按键是否被按下（可能是拖拽的开始）
+                    bool mouseButtonPressed = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0 || 
+                                             (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0;
+                    
+                    if (mouseButtonPressed)
+                    {
+                        // 鼠标按键被按下，可能是拖拽操作
+                        // 使用周期性检查，延迟关闭，等待 DragEnter/DragOver 事件触发
+                        // 定时器会周期性检查鼠标位置和按键状态
+                        dragDetectionTimer?.Stop();
+                        dragDetectionTimer?.Start();
+                    }
+                    else
+                    {
+                        // 鼠标按键没有被按下，只是点击，立即关闭窗口
+                        StopAutoCloseTimer();
+                        this.Hide();
+                        return; // 不再传递消息
+                    }
+                }
+            }
+            
+            base.WndProc(ref m);
         }
         
         #region 通知方法（ShareX风格）

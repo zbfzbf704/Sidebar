@@ -20,6 +20,7 @@
     <Company>Your Company</Company>
     <Copyright>Copyright (c) 2025</Copyright>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>icons\ico.ico</ApplicationIcon>
   </PropertyGroup>
   
   <ItemGroup>
@@ -53,6 +54,13 @@
   <ItemGroup>
     <!-- JSON 序列化库 -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <!-- 应用程序图标 -->
+    <None Include="icons\ico.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
   
   <!-- 构建时自动复制 FFmpeg 到输出目录（使用简化的目录名） -->

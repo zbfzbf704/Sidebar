@@ -25,7 +25,7 @@
     ---
     
     Copyright (c) 2025 蝴蝶哥
-    Email: 1780555120@qq.com
+    Email: your-email@example.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -248,6 +248,13 @@ namespace Sidebar
         // 配置相关：用于保存侧边栏停靠位置等
         private const string CONFIG_FILE_NAME = "sidebar_config.json";
         
+        // 系统托盘相关
+        private NotifyIcon notifyIcon;
+        private ContextMenuStrip trayMenu;
+        private ToolStripMenuItem menuExit;
+        private ToolStripMenuItem menuAutoStart;
+        private const string STARTUP_SHORTCUT_NAME = Program.AppName;
+        
         public SidebarForm()
         {
             InitializeComponent();
@@ -302,7 +309,167 @@ namespace Sidebar
             Paint += SidebarForm_Paint;
             MouseLeave += SidebarForm_MouseLeave;
             
+            // 初始化系统托盘
+            InitializeTrayIcon();
+            
             ResumeLayout(false);
+        }
+        
+        /// <summary>
+        /// 初始化系统托盘图标和菜单
+        /// </summary>
+        private void InitializeTrayIcon()
+        {
+            try
+            {
+                // 创建右键菜单
+                trayMenu = new ContextMenuStrip();
+                
+                // 自启动菜单项
+                menuAutoStart = new ToolStripMenuItem("开机自动启动");
+                menuAutoStart.CheckOnClick = true;
+                menuAutoStart.Checked = IsStartupEnabled();
+                menuAutoStart.Click += MenuAutoStart_Click;
+                trayMenu.Items.Add(menuAutoStart);
+                
+                trayMenu.Items.Add(new ToolStripSeparator());
+                
+                // 退出菜单项
+                menuExit = new ToolStripMenuItem("退出");
+                menuExit.Click += MenuExit_Click;
+                trayMenu.Items.Add(menuExit);
+                
+                // 创建托盘图标
+                notifyIcon = new NotifyIcon();
+                notifyIcon.ContextMenuStrip = trayMenu;
+                notifyIcon.Text = Program.AppName;
+                notifyIcon.Visible = true;
+                
+                // 加载图标
+                string iconPath = Path.Combine(Application.StartupPath, "icons", "ico.ico");
+                if (File.Exists(iconPath))
+                {
+                    notifyIcon.Icon = new Icon(iconPath);
+                }
+                else
+                {
+                    // 如果没有找到图标文件，使用默认图标
+                    iconPath = Path.Combine(Application.StartupPath, "icons", "ico.png");
+                    if (File.Exists(iconPath))
+                    {
+                        using (Bitmap bitmap = new Bitmap(iconPath))
+                        {
+                            IntPtr hIcon = bitmap.GetHicon();
+                            notifyIcon.Icon = Icon.FromHandle(hIcon);
+                        }
+                    }
+                    else
+                    {
+                        // 使用应用程序默认图标
+                        notifyIcon.Icon = SystemIcons.Application;
+                    }
+                }
+                
+                // 双击托盘图标显示/隐藏窗口（可选功能）
+                notifyIcon.DoubleClick += (s, e) =>
+                {
+                    if (this.Visible)
+                    {
+                        this.Hide();
+                    }
+                    else
+                    {
+                        this.Show();
+                        this.WindowState = FormWindowState.Normal;
+                        this.Activate();
+                    }
+                };
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"初始化系统托盘失败: {ex.Message}");
+#endif
+            }
+        }
+        
+        /// <summary>
+        /// 检查是否已启用开机自启动
+        /// </summary>
+        private bool IsStartupEnabled()
+        {
+            try
+            {
+                return ShortcutHelpers.CheckShortcut(Environment.SpecialFolder.Startup, STARTUP_SHORTCUT_NAME, Application.ExecutablePath);
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"检查自启动状态失败: {ex.Message}");
+#endif
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// 设置开机自启动
+        /// </summary>
+        private void SetStartupEnabled(bool enabled)
+        {
+            try
+            {
+                ShortcutHelpers.SetShortcut(enabled, Environment.SpecialFolder.Startup, STARTUP_SHORTCUT_NAME, Application.ExecutablePath);
+                if (menuAutoStart != null)
+                {
+                    menuAutoStart.Checked = enabled;
+                }
+            }
+            catch (Exception ex)
+            {
+#if DEBUG
+                System.Diagnostics.Debug.WriteLine($"设置自启动失败: {ex.Message}");
+#endif
+                MessageBox.Show($"设置自启动失败: {ex.Message}", Program.AppName, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                // 如果设置失败，恢复到实际状态
+                bool actualState = IsStartupEnabled();
+                if (menuAutoStart != null)
+                {
+                    menuAutoStart.Checked = actualState;
+                }
+            }
+        }
+        
+        /// <summary>
+        /// 自启动菜单项点击事件
+        /// </summary>
+        private void MenuAutoStart_Click(object sender, EventArgs e)
+        {
+            if (menuAutoStart != null)
+            {
+                // CheckOnClick 会自动切换 Checked 状态，所以直接使用当前状态
+                bool newState = menuAutoStart.Checked;
+                SetStartupEnabled(newState);
+            }
+        }
+        
+        /// <summary>
+        /// 退出菜单项点击事件
+        /// </summary>
+        private void MenuExit_Click(object sender, EventArgs e)
+        {
+            // 确认退出
+            DialogResult result = MessageBox.Show("确定要退出程序吗？", Program.AppName, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            if (result == DialogResult.Yes)
+            {
+                // 清理托盘图标
+                if (notifyIcon != null)
+                {
+                    notifyIcon.Visible = false;
+                }
+                
+                // 退出应用程序
+                Application.Exit();
+            }
         }
         
         private void SidebarForm_Load(object sender, EventArgs e)
@@ -3021,6 +3188,7 @@ namespace Sidebar
         private void CaptureRegionAndSave()
         {
             bool wasVisible = HideSidebarForCapture();
+            string tempFilePath = null;
             
             try
             {
@@ -3029,8 +3197,134 @@ namespace Sidebar
                 
                 if (screenshot != null)
                 {
-                    ShowSaveDialogAndSave(screenshot, $"截图_{DateTime.Now:yyyyMMdd_HHmmss}");
+                    try
+                    {
+                        // 保存为临时文件
+                        string tempDir = Path.GetTempPath();
+                        string tempFileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.png";
+                        tempFilePath = Path.Combine(tempDir, tempFileName);
+                        
+                        // 转换为非索引位图
+                        Bitmap nonIndexedBmp = ImageHelpers.NonIndexedBitmap(screenshot);
+                        
+                        // 保存临时文件
+                        ImageHelpers.SaveImage(nonIndexedBmp, tempFilePath);
+                        
+                        // 释放原始截图和临时位图
                     screenshot.Dispose();
+                        screenshot = null;
+                        nonIndexedBmp.Dispose();
+                        nonIndexedBmp = null;
+                        
+                        // 重新加载临时文件（用于编辑器）
+                        Bitmap editorImage = ImageHelpers.LoadImage(tempFilePath);
+                        
+                        if (editorImage != null)
+                        {
+                            // 创建默认的 RegionCaptureOptions
+                            RegionCaptureOptions options = new RegionCaptureOptions();
+                            
+                            // 创建并显示 RegionCaptureForm（图像编辑器）
+                            using (RegionCaptureForm editorForm = new RegionCaptureForm(RegionCaptureMode.Editor, options, editorImage))
+                            {
+                                editorForm.ImageFilePath = tempFilePath;
+                                
+                                // 设置保存图像事件处理器（点击保存按钮时调用）
+                                editorForm.SaveImageRequested += (output, originalFilePath) =>
+                                {
+                                    try
+                                    {
+                                        using (output)
+                                        {
+                                            // 使用 SaveFileDialog 让用户选择保存位置
+                                            using (SaveFileDialog saveDialog = new SaveFileDialog())
+                                            {
+                                                saveDialog.Filter = "PNG 图片|*.png|JPEG 图片|*.jpg|BMP 图片|*.bmp|所有文件|*.*";
+                                                saveDialog.FilterIndex = 1;
+                                                saveDialog.DefaultExt = "png";
+                                                saveDialog.FileName = $"截图_{DateTime.Now:yyyyMMdd_HHmmss}";
+                                                
+                                                if (saveDialog.ShowDialog(editorForm) == DialogResult.OK)
+                                                {
+                                                    // 保存图像到用户选择的位置
+                                                    ImageHelpers.SaveImage(output, saveDialog.FileName);
+                                                    
+                                                    // 保存成功后，异步关闭编辑器窗口
+                                                    editorForm.BeginInvoke((System.Windows.Forms.MethodInvoker)delegate
+                                                    {
+                                                        editorForm.DialogResult = DialogResult.OK;
+                                                        editorForm.Close();
+                                                    });
+                                                    
+                                                    return saveDialog.FileName;
+                                                }
+                                            }
+                                            return null;
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        LogError("保存图像失败", ex);
+                                        MessageBox.Show($"保存图像失败：{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                        return null;
+                                    }
+                                };
+                                
+                                // 设置另存为事件处理器（点击另存为按钮时调用）
+                                editorForm.SaveImageAsRequested += (output, originalFilePath) =>
+                                {
+                                    try
+                                    {
+                                        using (output)
+                                        {
+                                            // 使用 SaveFileDialog 让用户选择保存位置
+                                            using (SaveFileDialog saveDialog = new SaveFileDialog())
+                                            {
+                                                saveDialog.Filter = "PNG 图片|*.png|JPEG 图片|*.jpg|BMP 图片|*.bmp|所有文件|*.*";
+                                                saveDialog.FilterIndex = 1;
+                                                saveDialog.DefaultExt = "png";
+                                                saveDialog.FileName = Path.GetFileNameWithoutExtension(originalFilePath ?? $"截图_{DateTime.Now:yyyyMMdd_HHmmss}");
+                                                
+                                                if (saveDialog.ShowDialog(editorForm) == DialogResult.OK)
+                                                {
+                                                    // 保存图像到用户选择的位置
+                                                    ImageHelpers.SaveImage(output, saveDialog.FileName);
+                                                    
+                                                    // 保存成功后，异步关闭编辑器窗口
+                                                    editorForm.BeginInvoke((System.Windows.Forms.MethodInvoker)delegate
+                                                    {
+                                                        editorForm.DialogResult = DialogResult.OK;
+                                                        editorForm.Close();
+                                                    });
+                                                    
+                                                    return saveDialog.FileName;
+                                                }
+                                            }
+                                            return null;
+                                        }
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        LogError("另存为图像失败", ex);
+                                        MessageBox.Show($"另存为图像失败：{ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                                        return null;
+                                    }
+                                };
+                                
+                                // 隐藏工具栏中的上传和复制按钮
+                                HideEditorToolbarButtons(editorForm);
+                                
+                                // 显示编辑器（模态对话框）
+                                editorForm.ShowDialog();
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogError("打开图像编辑器失败", ex);
+                        ShowNotification($"打开图像编辑器失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
+                        screenshot?.Dispose();
+                    }
                 }
             }
             catch (Exception ex)
@@ -3039,6 +3333,19 @@ namespace Sidebar
             }
             finally
             {
+                // 清理临时文件
+                if (!string.IsNullOrEmpty(tempFilePath) && File.Exists(tempFilePath))
+                {
+                    try
+                    {
+                        File.Delete(tempFilePath);
+                    }
+                    catch
+                    {
+                        // 忽略删除临时文件时的错误
+                    }
+                }
+                
                 RestoreSidebarAfterCapture(wasVisible);
             }
         }
@@ -7403,6 +7710,14 @@ namespace Sidebar
                 // 注销所有快捷键
                 UnregisterAllHotkeys();
                 globalHotkeyForm?.Dispose();
+                
+                // 清理系统托盘
+                if (notifyIcon != null)
+                {
+                    notifyIcon.Visible = false;
+                    notifyIcon.Dispose();
+                }
+                trayMenu?.Dispose();
             }
             base.Dispose(disposing);
         }

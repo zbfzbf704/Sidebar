@@ -2,7 +2,7 @@
 
 /*
     Copyright (c) 2025 蝴蝶哥
-    Email: 1780555120@qq.com
+    Email: your-email@example.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -257,7 +257,7 @@ namespace Sidebar
             // 反馈邮箱
             lblEmail = new Label
             {
-                Text = "反馈：1780555120@qq.com",
+                Text = "反馈：your-email@example.com",
                 Location = new Point(padding, bottomY + 25),
                 Size = new Size(300, 20),
                 ForeColor = textColor,

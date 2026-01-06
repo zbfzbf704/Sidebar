@@ -25,7 +25,7 @@
     ---
     
     Copyright (c) 2025 蝴蝶哥
-    Email: 1780555120@qq.com
+    Email: your-email@example.com
     
     This code is part of the Sidebar application.
     All rights reserved.

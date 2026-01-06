@@ -25,7 +25,7 @@
     ---
     
     Copyright (c) 2025 蝴蝶哥
-    Email: 1780555120@qq.com
+    Email: your-email@example.com
     
     This code is part of the Sidebar application.
     All rights reserved.
@@ -44,6 +44,8 @@ namespace Sidebar
     internal static class Program
     {
         public const string AppName = "SideBar";
+        public const string MutexName = "SideBar-SingleInstance-82E6AC09-0FEF-4390-AD9F-0DD3F5561EFC";
+        public static readonly string PipeName = $"{Environment.MachineName}-{Environment.UserName}-{AppName}";
         
         /// <summary>
         /// 应用程序的主入口点。
@@ -58,6 +60,16 @@ namespace Sidebar
             // 高 DPI 支持
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             
+            // 单实例检查：如果已有实例运行，静默退出
+            using (SingleInstanceManager singleInstanceManager = new SingleInstanceManager(MutexName, PipeName, true, args))
+            {
+                // 如果不是第一个实例，SingleInstanceManager 会自动将参数发送给第一个实例并退出
+                if (!singleInstanceManager.IsFirstInstance)
+                {
+                    // 静默退出，不显示任何消息
+                    return;
+                }
+            
             // 加载自定义图标并替换 ShareX 默认图标
             LoadCustomIcon();
             
@@ -66,6 +78,7 @@ namespace Sidebar
             sidebar.Show();
             
             Application.Run();
+            }
         }
         
         /// <summary>
