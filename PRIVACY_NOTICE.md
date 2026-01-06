@@ -7,13 +7,11 @@
 ## 已移除/替换的信息
 
 ### 1. 邮箱地址
-- **原始值**：`1780555120@qq.com`
-- **替换为**：`your-email@example.com`
+- **已替换为**：`your-email@example.com`
 - **位置**：所有源代码文件中的版权声明和反馈信息
 
 ### 2. API 服务器地址
-- **原始值**：`https://auth.hudiege.cn`
-- **替换为**：`https://your-api-server.com`
+- **已替换为**：`https://your-api-server.com`
 - **位置**：`AuthAPIClient.cs` 中的 `AUTH_SERVER` 常量
 
 ### 3. 其他敏感信息

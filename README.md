@@ -69,8 +69,8 @@ dotnet build
 **重要：本开源代码已移除所有隐私信息！**
 
 为了遵守开源协议并保护隐私，以下信息已被替换为占位符：
-- 邮箱地址：`1780555120@qq.com` → `your-email@example.com`
-- API 服务器：`https://auth.hudiege.cn` → `https://your-api-server.com`
+- 邮箱地址：已替换为 `your-email@example.com`
+- API 服务器：已替换为 `https://your-api-server.com`
 
 详细说明请查看 `PRIVACY_NOTICE.md` 文件。
 
