@@ -3932,6 +3932,112 @@ namespace Sidebar
             }
         }
         
+        // 统一的 FFmpeg 路径检测方法（供视频录制和视频转换器共用）
+        private string DetectFFmpegPath()
+        {
+            string ffmpegPath = "";
+            
+            // 首先检查是否有保存的自定义路径
+            string customPath = GetCustomFFmpegPath();
+            if (!string.IsNullOrEmpty(customPath) && File.Exists(customPath))
+            {
+                ffmpegPath = customPath;
+                LogDebug($"使用保存的自定义 FFmpeg 路径: {ffmpegPath}");
+                return ffmpegPath;
+            }
+            
+            // 如果没有自定义路径，尝试自动查找
+            string appDir = AppDomain.CurrentDomain.BaseDirectory;
+            string startupDir = Application.StartupPath;
+            
+            // 尝试多个可能的路径（按优先级，优先检查 StartupPath）
+            string[] possiblePaths = new string[]
+            {
+                Path.Combine(startupDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                Path.Combine(startupDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                Path.Combine(startupDir, "ffmpeg.exe"),
+                Path.Combine(appDir, "ffmpeg.exe")
+            };
+            
+            foreach (string path in possiblePaths)
+            {
+                if (File.Exists(path))
+                {
+                    ffmpegPath = path;
+                    LogDebug($"自动检测到 FFmpeg 路径: {ffmpegPath}");
+                    return ffmpegPath;
+                }
+            }
+            
+            // 如果还没找到，尝试使用 FileHelpers.GetAbsolutePath（ShareX 的标准方式）
+            try
+            {
+                string absolutePath = FileHelpers.GetAbsolutePath("ffmpeg.exe");
+                if (File.Exists(absolutePath))
+                {
+                    ffmpegPath = absolutePath;
+                    LogDebug($"通过 FileHelpers 找到 FFmpeg: {ffmpegPath}");
+                    return ffmpegPath;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("解析 FFmpeg 绝对路径失败", ex);
+            }
+            
+            // 如果还没找到，尝试在其他常见位置查找
+            string[] commonPaths = new string[]
+            {
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin", "ffmpeg.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "ffmpeg", "bin", "ffmpeg.exe"),
+            };
+            
+            foreach (string path in commonPaths)
+            {
+                if (File.Exists(path))
+                {
+                    ffmpegPath = path;
+                    LogDebug($"在系统目录找到 FFmpeg: {ffmpegPath}");
+                    return ffmpegPath;
+                }
+            }
+            
+            // 如果还没找到，尝试在系统 PATH 中查找
+            try
+            {
+                using (System.Diagnostics.Process process = new System.Diagnostics.Process())
+                {
+                    process.StartInfo.FileName = "where";
+                    process.StartInfo.Arguments = "ffmpeg.exe";
+                    process.StartInfo.UseShellExecute = false;
+                    process.StartInfo.RedirectStandardOutput = true;
+                    process.StartInfo.CreateNoWindow = true;
+                    process.Start();
+                    string output = process.StandardOutput.ReadToEnd();
+                    process.WaitForExit();
+                    
+                    if (!string.IsNullOrEmpty(output))
+                    {
+                        string[] lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (lines.Length > 0 && File.Exists(lines[0]))
+                        {
+                            ffmpegPath = lines[0].Trim();
+                            LogDebug($"在系统 PATH 中找到 FFmpeg: {ffmpegPath}");
+                            return ffmpegPath;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError("在系统 PATH 中查找 FFmpeg 失败", ex);
+            }
+            
+            return ffmpegPath; // 返回空字符串表示未找到
+        }
+        
         // 让用户选择 FFmpeg 路径
         private string SelectFFmpegPath()
         {
@@ -3997,112 +4103,8 @@ namespace Sidebar
                 // 直接创建 VideoConverterOptions，避免依赖 TaskSettings
                 VideoConverterOptions options = new VideoConverterOptions();
                 
-                // 尝试查找 FFmpeg 路径
-                string ffmpegPath = "";
-                
-                // 首先检查是否有保存的自定义路径
-                string customPath = GetCustomFFmpegPath();
-                if (!string.IsNullOrEmpty(customPath) && File.Exists(customPath))
-                {
-                    ffmpegPath = customPath;
-                    LogDebug($"使用保存的自定义 FFmpeg 路径: {ffmpegPath}");
-                }
-                
-                // 如果没有自定义路径，尝试自动查找
-                if (string.IsNullOrEmpty(ffmpegPath))
-                {
-                    // 优先查找应用程序目录下的 FFmpeg（集成版本，使用简化的目录名）
-                    string[] appPaths = new string[]
-                    {
-                        Path.Combine(Application.StartupPath, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
-                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
-                        // 兼容旧版本路径
-                        Path.Combine(Application.StartupPath, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
-                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
-                        Path.Combine(Application.StartupPath, "ffmpeg.exe"),
-                        Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg.exe"),
-                    };
-                    
-                    foreach (string path in appPaths)
-                    {
-                        if (File.Exists(path))
-                        {
-                            ffmpegPath = path;
-                            LogDebug($"在应用程序目录找到 FFmpeg: {ffmpegPath}");
-                            break;
-                        }
-                    }
-                }
-                
-                // 如果还没找到，尝试使用 FileHelpers.GetAbsolutePath（ShareX 的标准方式）
-                if (string.IsNullOrEmpty(ffmpegPath) || !File.Exists(ffmpegPath))
-                {
-                    try
-                    {
-                        string absolutePath = FileHelpers.GetAbsolutePath("ffmpeg.exe");
-                        if (File.Exists(absolutePath))
-                        {
-                            ffmpegPath = absolutePath;
-                            LogDebug($"通过 FileHelpers 找到 FFmpeg: {ffmpegPath}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LogError("解析 FFmpeg 绝对路径失败", ex);
-                    }
-                }
-                
-                // 如果还没找到，尝试在其他常见位置查找
-                if (string.IsNullOrEmpty(ffmpegPath) || !File.Exists(ffmpegPath))
-                {
-                    string[] commonPaths = new string[]
-                    {
-                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin", "ffmpeg.exe"),
-                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "ffmpeg", "bin", "ffmpeg.exe"),
-                    };
-                    
-                    foreach (string path in commonPaths)
-                    {
-                        if (File.Exists(path))
-                        {
-                            ffmpegPath = path;
-                            LogDebug($"在系统目录找到 FFmpeg: {ffmpegPath}");
-                            break;
-                        }
-                    }
-                }
-                
-                // 如果还没找到，尝试在系统 PATH 中查找
-                if (string.IsNullOrEmpty(ffmpegPath) || !File.Exists(ffmpegPath))
-                {
-                    try
-                    {
-                        using (System.Diagnostics.Process process = new System.Diagnostics.Process())
-                        {
-                            process.StartInfo.FileName = "where";
-                            process.StartInfo.Arguments = "ffmpeg.exe";
-                            process.StartInfo.UseShellExecute = false;
-                            process.StartInfo.RedirectStandardOutput = true;
-                            process.StartInfo.CreateNoWindow = true;
-                            process.Start();
-                            string output = process.StandardOutput.ReadToEnd();
-                            process.WaitForExit();
-                            
-                            if (!string.IsNullOrEmpty(output))
-                            {
-                                string[] lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                                if (lines.Length > 0 && File.Exists(lines[0]))
-                                {
-                                    ffmpegPath = lines[0].Trim();
-                                }
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LogError("读取 FFmpeg 路径配置失败", ex);
-                    }
-                }
+                // 使用统一的 FFmpeg 路径检测方法
+                string ffmpegPath = DetectFFmpegPath();
                 
                 // 如果仍然找不到，提示用户选择路径
                 if (string.IsNullOrEmpty(ffmpegPath) || !File.Exists(ffmpegPath))
@@ -6985,10 +6987,48 @@ namespace Sidebar
                 }
             }
             
-            // 检查 FFmpeg 是否存在
-            if (!System.IO.File.Exists(options.FFmpegPath))
+            // 检查 FFmpeg 是否存在，如果不存在则尝试自动检测
+            string ffmpegPath = options.FFmpegPath;
+            if (!System.IO.File.Exists(ffmpegPath))
             {
-                throw new Exception($"FFmpeg 未找到。路径: {options.FFmpegPath}\n请确保 FFmpeg 已正确安装。");
+                // 尝试自动检测 FFmpeg 路径（程序目录内）
+                string appDir = AppDomain.CurrentDomain.BaseDirectory;
+                string startupDir = Application.StartupPath;
+                
+                // 尝试多个可能的路径（按优先级，优先检查 StartupPath）
+                string[] possiblePaths = new string[]
+                {
+                    Path.Combine(startupDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                    Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                    Path.Combine(startupDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                    Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                    Path.Combine(startupDir, "ffmpeg.exe"),
+                    Path.Combine(appDir, "ffmpeg.exe")
+                };
+                
+                string foundPath = null;
+                foreach (string path in possiblePaths)
+                {
+                    if (System.IO.File.Exists(path))
+                    {
+                        foundPath = path;
+                        break;
+                    }
+                }
+                
+                if (foundPath != null)
+                {
+                    // 自动设置找到的路径
+                    options.OverrideCLIPath = true;
+                    options.CLIPath = foundPath;
+                    ffmpegPath = foundPath;
+                    LogDebug($"自动检测到 FFmpeg 路径: {ffmpegPath}");
+                }
+                else
+                {
+                    // 如果仍然找不到，抛出异常
+                    throw new Exception($"FFmpeg 未找到。尝试的路径: {ffmpegPath}\n\n请确保 FFmpeg 已正确安装。\n\n预期位置：\n- {Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe")}\n- {Path.Combine(appDir, "ffmpeg.exe")}");
+                }
             }
         }
         
@@ -7197,22 +7237,40 @@ namespace Sidebar
                 if (string.IsNullOrEmpty(ffmpegOptions.CLIPath) || !System.IO.File.Exists(ffmpegOptions.CLIPath))
                 {
                     string appDir = AppDomain.CurrentDomain.BaseDirectory;
-                    // 使用简化的目录名，同时兼容旧版本路径
-                    string defaultFFmpegPath = Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe");
-                    if (!File.Exists(defaultFFmpegPath))
+                    string startupDir = Application.StartupPath;
+                    
+                    // 尝试多个可能的路径（按优先级）
+                    string[] possiblePaths = new string[]
                     {
-                        // 兼容旧版本路径
-                        defaultFFmpegPath = Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe");
+                        Path.Combine(startupDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                        Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                        Path.Combine(startupDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                        Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                        Path.Combine(startupDir, "ffmpeg.exe"),
+                        Path.Combine(appDir, "ffmpeg.exe")
+                    };
+                    
+                    string foundPath = null;
+                    foreach (string path in possiblePaths)
+                    {
+                        if (System.IO.File.Exists(path))
+                        {
+                            foundPath = path;
+                            break;
+                        }
                     }
-                    if (System.IO.File.Exists(defaultFFmpegPath))
+                    
+                    if (foundPath != null)
                     {
                         ffmpegOptions.OverrideCLIPath = true;
-                        ffmpegOptions.CLIPath = defaultFFmpegPath;
+                        ffmpegOptions.CLIPath = foundPath;
                         
                         // 保存自动检测的路径
                         settings.FFmpegOverrideCLIPath = true;
-                        settings.FFmpegCLIPath = defaultFFmpegPath;
+                        settings.FFmpegCLIPath = foundPath;
                         settings.Save();
+                        
+                        LogDebug($"自动检测到 FFmpeg 路径: {foundPath}");
                     }
                 }
             }
