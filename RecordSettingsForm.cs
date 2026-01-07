@@ -89,6 +89,22 @@ namespace Sidebar
             ffmpegOptions.OverrideCLIPath = settings.FFmpegOverrideCLIPath;
             ffmpegOptions.CLIPath = settings.FFmpegCLIPath;
             
+            // 如果未设置路径或路径无效，尝试自动检测
+            if (string.IsNullOrEmpty(ffmpegOptions.CLIPath) || !File.Exists(ffmpegOptions.CLIPath))
+            {
+                string detectedPath = DetectFFmpegPath();
+                if (!string.IsNullOrEmpty(detectedPath))
+                {
+                    ffmpegOptions.OverrideCLIPath = true;
+                    ffmpegOptions.CLIPath = detectedPath;
+                    
+                    // 保存检测到的路径
+                    settings.FFmpegOverrideCLIPath = true;
+                    settings.FFmpegCLIPath = detectedPath;
+                    settings.Save();
+                }
+            }
+            
             // 加载 FFmpeg 视频/音频源和编码器设置
             ffmpegOptions.VideoSource = settings.VideoSource;
             ffmpegOptions.AudioSource = settings.AudioSource;
@@ -365,6 +381,66 @@ namespace Sidebar
                     }
                 }
             }
+        }
+        
+        // 检测 FFmpeg 路径
+        private string DetectFFmpegPath()
+        {
+            string appDir = AppDomain.CurrentDomain.BaseDirectory;
+            string startupDir = Application.StartupPath;
+            
+            // 尝试多个可能的路径（按优先级，优先检查 StartupPath）
+            string[] possiblePaths = new string[]
+            {
+                Path.Combine(startupDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                Path.Combine(startupDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
+                Path.Combine(startupDir, "ffmpeg.exe"),
+                Path.Combine(appDir, "ffmpeg.exe"),
+                // 也检查 Program Files 目录（安装后的位置）
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+            };
+            
+            foreach (string path in possiblePaths)
+            {
+                if (File.Exists(path))
+                {
+                    return path;
+                }
+            }
+            
+            // 尝试在系统 PATH 中查找
+            try
+            {
+                using (var process = new System.Diagnostics.Process())
+                {
+                    process.StartInfo.FileName = "where";
+                    process.StartInfo.Arguments = "ffmpeg.exe";
+                    process.StartInfo.UseShellExecute = false;
+                    process.StartInfo.RedirectStandardOutput = true;
+                    process.StartInfo.CreateNoWindow = true;
+                    process.Start();
+                    string output = process.StandardOutput.ReadToEnd();
+                    process.WaitForExit();
+                    
+                    if (process.ExitCode == 0 && !string.IsNullOrEmpty(output))
+                    {
+                        string[] lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                        if (lines.Length > 0 && File.Exists(lines[0]))
+                        {
+                            return lines[0].Trim();
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // 忽略错误
+            }
+            
+            return null;
         }
     }
 }

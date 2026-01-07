@@ -3987,9 +3987,13 @@ namespace Sidebar
                 LogError("解析 FFmpeg 绝对路径失败", ex);
             }
             
-            // 如果还没找到，尝试在其他常见位置查找
+            // 如果还没找到，尝试在其他常见位置查找（包括安装后的位置）
             string[] commonPaths = new string[]
             {
+                // SideBar 安装目录（Program Files (x86) 优先，因为32位程序默认安装在这里）
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                // 通用 ffmpeg 位置
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "ffmpeg", "bin", "ffmpeg.exe"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "ffmpeg", "bin", "ffmpeg.exe"),
             };
@@ -4036,6 +4040,40 @@ namespace Sidebar
             }
             
             return ffmpegPath; // 返回空字符串表示未找到
+        }
+        
+        // 检测特效文件夹路径
+        private string DetectEffectsFolder()
+        {
+            string appDir = AppDomain.CurrentDomain.BaseDirectory;
+            string startupDir = Application.StartupPath;
+            
+            // 尝试多个可能的路径（按优先级）
+            string[] possiblePaths = new string[]
+            {
+                // 程序启动目录
+                Path.Combine(startupDir, "特效"),
+                Path.Combine(appDir, "特效"),
+                // 安装后的位置（Program Files）
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SideBar", "特效"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SideBar", "特效"),
+                // AppData 目录
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Sidebar", "特效"),
+            };
+            
+            foreach (string path in possiblePaths)
+            {
+                if (Directory.Exists(path))
+                {
+                    LogDebug($"检测到特效文件夹: {path}");
+                    return path;
+                }
+            }
+            
+            // 如果都没找到，返回默认路径（程序启动目录）
+            string defaultPath = Path.Combine(startupDir, "特效");
+            LogDebug($"未找到特效文件夹，使用默认路径: {defaultPath}");
+            return defaultPath;
         }
         
         // 让用户选择 FFmpeg 路径
@@ -4523,17 +4561,8 @@ namespace Sidebar
         {
             try
             {
-                // 使用应用程序目录下的特效文件夹（相对路径）
-                string EFFECTS_FOLDER = Path.Combine(Application.StartupPath, "特效");
-                if (!Directory.Exists(EFFECTS_FOLDER))
-                {
-                    // 如果应用程序目录下没有，尝试使用 AppData 目录
-                    EFFECTS_FOLDER = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Sidebar", "特效");
-                    if (!Directory.Exists(EFFECTS_FOLDER))
-                    {
-                        EFFECTS_FOLDER = Path.Combine(Application.StartupPath, "特效");
-                    }
-                }
+                // 检测特效文件夹路径（按优先级）
+                string EFFECTS_FOLDER = DetectEffectsFolder();
                 EFFECTS_FOLDER = EFFECTS_FOLDER + Path.DirectorySeparatorChar;
                 
                 // 使用 ShareX 的图片特效功能
@@ -7003,7 +7032,10 @@ namespace Sidebar
                     Path.Combine(startupDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
                     Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
                     Path.Combine(startupDir, "ffmpeg.exe"),
-                    Path.Combine(appDir, "ffmpeg.exe")
+                    Path.Combine(appDir, "ffmpeg.exe"),
+                    // 安装后的位置（Program Files）
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe")
                 };
                 
                 string foundPath = null;
@@ -7027,7 +7059,7 @@ namespace Sidebar
                 else
                 {
                     // 如果仍然找不到，抛出异常
-                    throw new Exception($"FFmpeg 未找到。尝试的路径: {ffmpegPath}\n\n请确保 FFmpeg 已正确安装。\n\n预期位置：\n- {Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe")}\n- {Path.Combine(appDir, "ffmpeg.exe")}");
+                    throw new Exception($"FFmpeg 未找到。尝试的路径: {ffmpegPath}\n\n请确保 FFmpeg 已正确安装。\n\n预期位置：\n- {Path.Combine(appDir, "ffmpeg-8.0.1", "bin", "ffmpeg.exe")}\n- {Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe")}");
                 }
             }
         }
@@ -7233,7 +7265,7 @@ namespace Sidebar
                 ffmpegOptions.Vorbis_QScale = settings.Vorbis_QScale;
                 ffmpegOptions.MP3_QScale = settings.MP3_QScale;
                 
-                // 如果未设置路径，尝试自动检测 FFmpeg 路径（程序目录内）
+                // 如果未设置路径，尝试自动检测 FFmpeg 路径
                 if (string.IsNullOrEmpty(ffmpegOptions.CLIPath) || !System.IO.File.Exists(ffmpegOptions.CLIPath))
                 {
                     string appDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -7247,7 +7279,10 @@ namespace Sidebar
                         Path.Combine(startupDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
                         Path.Combine(appDir, "ffmpeg-8.0.1-essentials_build", "bin", "ffmpeg.exe"),
                         Path.Combine(startupDir, "ffmpeg.exe"),
-                        Path.Combine(appDir, "ffmpeg.exe")
+                        Path.Combine(appDir, "ffmpeg.exe"),
+                        // 安装后的位置（Program Files）
+                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe"),
+                        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SideBar", "ffmpeg-8.0.1", "bin", "ffmpeg.exe")
                     };
                     
                     string foundPath = null;

@@ -520,13 +520,21 @@ namespace Sidebar
                 {
                     if (File.Exists(filePath) || Directory.Exists(filePath))
                     {
-                        // 检查：如果文件来自桌面但当前分类不是"桌面"，则不允许添加
-                        if (IsFromDesktop(filePath) && currentCategory != DEFAULT_CATEGORY)
+                        // 检查拖拽规则：
+                        // 1. 快捷方式（.lnk 文件）可以拖拽到任何分类
+                        // 2. 桌面上的真实文件/文件夹只能拖拽到"桌面"分类
+                        bool isShortcut = IsShortcutFile(filePath);
+                        bool isFromDesktop = IsFromDesktop(filePath);
+                        
+                        if (isFromDesktop && !isShortcut && currentCategory != DEFAULT_CATEGORY)
                         {
+                            // 桌面上的真实文件/文件夹，只能添加到"桌面"分类
                             ShowNotification(
-                                $"桌面文件只能添加到\"{DEFAULT_CATEGORY}\"分类中。\n\n请先切换到\"{DEFAULT_CATEGORY}\"分类，然后再拖入桌面文件。",
+                                $"桌面上的真实文件/文件夹只能添加到\"{DEFAULT_CATEGORY}\"分类中。\n\n" +
+                                $"💡 提示：桌面上的快捷方式可以添加到任何分类。\n\n" +
+                                $"请先切换到\"{DEFAULT_CATEGORY}\"分类，然后再拖入此文件。",
                                 "提示",
-                                3000,
+                                4000,
                                 MessageBoxIcon.Information
                             );
                             continue;
@@ -571,6 +579,26 @@ namespace Sidebar
                 
                 // 检查文件路径是否以桌面路径开头
                 return normalizedFilePath.StartsWith(normalizedDesktopPath, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// 检查文件是否是快捷方式
+        /// </summary>
+        private bool IsShortcutFile(string filePath)
+        {
+            try
+            {
+                // 检查文件扩展名是否为 .lnk（Windows 快捷方式）
+                string extension = Path.GetExtension(filePath);
+                if (string.IsNullOrEmpty(extension))
+                    return false;
+                    
+                return extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase);
             }
             catch
             {
@@ -813,6 +841,45 @@ namespace Sidebar
             
             menu.Items.Add(new ToolStripSeparator());
             
+            // 移动到其他分类（只有多个分类时才显示）
+            if (selectedItem != null && categories.Count > 1)
+            {
+                ToolStripMenuItem moveToItem = new ToolStripMenuItem("移动到分类");
+                
+                // 获取当前项目的源文件路径
+                string itemSourcePath = selectedItem.OriginalPath ?? selectedItem.FilePath;
+                bool isShortcut = IsShortcutFile(itemSourcePath);
+                bool isFromDesktop = IsFromDesktop(itemSourcePath);
+                bool isDesktopRealFile = isFromDesktop && !isShortcut && selectedItem.IsRealFile;
+                
+                foreach (var category in categories.Keys)
+                {
+                    if (category == currentCategory) continue; // 跳过当前分类
+                    
+                    ToolStripMenuItem categoryItem = new ToolStripMenuItem(category);
+                    string targetCategory = category; // 捕获变量
+                    
+                    // 如果是桌面真实文件，只能移动到"桌面"分类
+                    if (isDesktopRealFile && targetCategory != DEFAULT_CATEGORY)
+                    {
+                        categoryItem.Enabled = false;
+                        categoryItem.ToolTipText = "桌面真实文件只能在\"桌面\"分类中";
+                    }
+                    else
+                    {
+                        categoryItem.Click += (s, e) => MoveItemToCategory(selectedItem, targetCategory);
+                    }
+                    
+                    moveToItem.DropDownItems.Add(categoryItem);
+                }
+                
+                if (moveToItem.DropDownItems.Count > 0)
+                {
+                    menu.Items.Add(moveToItem);
+                    menu.Items.Add(new ToolStripSeparator());
+                }
+            }
+            
             // 如果是文件夹，添加备份选项
             if (selectedItem != null)
             {
@@ -856,6 +923,56 @@ namespace Sidebar
             menu.Items.Add(restoreItem);
             
             menu.Show(this, location);
+        }
+        
+        /// <summary>
+        /// 移动图标到指定分类
+        /// </summary>
+        private void MoveItemToCategory(DesktopItem item, string targetCategory)
+        {
+            if (item == null || string.IsNullOrEmpty(targetCategory))
+                return;
+                
+            // 开始移动操作
+            StartOperation();
+            
+            try
+            {
+                // 检查目标分类是否存在
+                if (!categories.ContainsKey(targetCategory))
+                {
+                    categories[targetCategory] = new List<DesktopItem>();
+                }
+                
+                // 从当前分类移除
+                if (categories.ContainsKey(currentCategory))
+                {
+                    categories[currentCategory].Remove(item);
+                }
+                
+                // 添加到目标分类
+                categories[targetCategory].Add(item);
+                
+                // 保存数据
+                SaveItems();
+                
+                // 更新界面
+                UpdateWindowSize();
+                if (IsHandleCreated)
+                {
+                    UpdateLayeredWindowBitmap();
+                }
+                
+                ShowNotification($"已将 \"{item.DisplayName}\" 移动到 \"{targetCategory}\" 分类", "成功", 2000);
+            }
+            catch (Exception ex)
+            {
+                ShowNotification($"移动失败：{ex.Message}", "错误", 3000, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                EndOperation();
+            }
         }
         
         private void BackupData()
@@ -2597,13 +2714,22 @@ namespace Sidebar
                 DisplayName = Path.GetFileNameWithoutExtension(filePath) // 不显示扩展名，仅显示名称
             };
             
-            // 判断是否来自桌面
-            if (IsFromDesktop(filePath))
+            // 判断文件类型
+            bool isShortcut = IsShortcutFile(filePath);
+            bool isFromDesktopLocation = IsFromDesktop(filePath);
+            
+            if (isFromDesktopLocation)
             {
-                // 桌面文件：只有"桌面"分类可以添加真实文件
-                if (currentCategory == DEFAULT_CATEGORY)
+                if (isShortcut)
                 {
-                    // 桌面分类：复制为真实文件
+                    // 桌面上的快捷方式：可以添加到任何分类，保存为路径引用
+                    item.FilePath = filePath;
+                    item.OriginalPath = filePath;
+                    item.IsRealFile = false;
+                }
+                else if (currentCategory == DEFAULT_CATEGORY)
+                {
+                    // 桌面上的真实文件/文件夹，且在"桌面"分类：复制为真实文件
                     string copiedPath = CopyToStorage(filePath, item.DisplayName);
                     if (copiedPath != null)
                     {
@@ -2637,7 +2763,7 @@ namespace Sidebar
                 }
                 else
                 {
-                    // 其他分类：不允许添加桌面文件（已在DragDrop中检查，这里作为双重保险）
+                    // 桌面上的真实文件/文件夹，但不在"桌面"分类：不允许添加（已在DragDrop中检查，这里作为双重保险）
                     return;
                 }
             }
